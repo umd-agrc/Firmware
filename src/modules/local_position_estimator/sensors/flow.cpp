@@ -63,10 +63,9 @@ int BlockLocalPositionEstimator::flowMeasure(Vector<float, n_y_flow> &y)
 		return -1;
 	}
 
-	matrix::Quaternion<float> q(&_sub_att.get().q[0]);
-	matrix::Euler<float> euler(q);
+	matrix::Eulerf euler = matrix::Quatf(_sub_att.get().q);
 
-	float d = agl() * cosf(euler(0)) * cosf(euler(1));
+	float d = agl() * cosf(euler.phi()) * cosf(euler.theta());
 
 	// check for global accuracy
 	if (_gpsInitialized) {
