@@ -178,7 +178,7 @@ BlockLocalPositionEstimator::BlockLocalPositionEstimator() :
 	_err_perf(),
 
 	// kf matrices
-	_x(), _u(), _P()
+	_x(), _u(), _P(), _R_att(), _eul()
 {
 	// assign distance subs to array
 	_dist_subs[0] = &_sub_dist0;
@@ -688,7 +688,8 @@ void BlockLocalPositionEstimator::publishLocalPos()
 		_pub_lpos.get().vx = xLP(X_vx); // north
 		_pub_lpos.get().vy = xLP(X_vy); // east
 		_pub_lpos.get().vz = xLP(X_vz); // down
-		_pub_lpos.get().yaw = _sub_att.get().yaw;
+
+		_pub_lpos.get().yaw = _eul(2);
 		_pub_lpos.get().xy_global = _validXY;
 		_pub_lpos.get().z_global = _baroInitialized;
 		_pub_lpos.get().ref_timestamp = _timeStamp;
@@ -762,7 +763,7 @@ void BlockLocalPositionEstimator::publishGlobalPos()
 		_pub_gpos.get().vel_n = xLP(X_vx);
 		_pub_gpos.get().vel_e = xLP(X_vy);
 		_pub_gpos.get().vel_d = xLP(X_vz);
-		_pub_gpos.get().yaw = _sub_att.get().yaw;
+		_pub_gpos.get().yaw = _eul(2);
 		_pub_gpos.get().eph = sqrtf(_P(X_x, X_x) + _P(X_y, X_y));
 		_pub_gpos.get().epv = sqrtf(_P(X_z, X_z));
 		_pub_gpos.get().terrain_alt = _altOrigin - xLP(X_tz);
@@ -814,18 +815,17 @@ void BlockLocalPositionEstimator::updateSSStates()
 {
 	// derivative of velocity is accelerometer acceleration
 	// (in input matrix) - bias (in body frame)
-	Matrix3f R_att(_sub_att.get().R);
-	_A(X_vx, X_bx) = -R_att(0, 0);
-	_A(X_vx, X_by) = -R_att(0, 1);
-	_A(X_vx, X_bz) = -R_att(0, 2);
+	_A(X_vx, X_bx) = -_R_att(0, 0);
+	_A(X_vx, X_by) = -_R_att(0, 1);
+	_A(X_vx, X_bz) = -_R_att(0, 2);
 
-	_A(X_vy, X_bx) = -R_att(1, 0);
-	_A(X_vy, X_by) = -R_att(1, 1);
-	_A(X_vy, X_bz) = -R_att(1, 2);
+	_A(X_vy, X_bx) = -_R_att(1, 0);
+	_A(X_vy, X_by) = -_R_att(1, 1);
+	_A(X_vy, X_bz) = -_R_att(1, 2);
 
-	_A(X_vz, X_bx) = -R_att(2, 0);
-	_A(X_vz, X_by) = -R_att(2, 1);
-	_A(X_vz, X_bz) = -R_att(2, 2);
+	_A(X_vz, X_bx) = -_R_att(2, 0);
+	_A(X_vz, X_by) = -_R_att(2, 1);
+	_A(X_vz, X_bz) = -_R_att(2, 2);
 }
 
 void BlockLocalPositionEstimator::updateSSParams()
@@ -869,11 +869,13 @@ void BlockLocalPositionEstimator::predict()
 	// state or covariance
 	if (!_validXY && !_validZ) { return; }
 
-	if (integrate && _sub_att.get().R_valid) {
-		Matrix3f R_att(_sub_att.get().R);
+	if (integrate && _sub_att.get().q_valid) {
+		matrix::Quaternion<float> q(&_sub_att.get().q[0]);
+		_eul = matrix::Euler<float>(q);
+		_R_att = matrix::Dcm<float>(q);
 		Vector3f a(_sub_sensor.get().accelerometer_m_s2);
 		// note, bias is removed in dynamics function
-		_u = R_att * a;
+		_u = _R_att * a;
 		_u(U_az) += 9.81f; // add g
 
 	} else {

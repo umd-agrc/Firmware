@@ -63,7 +63,10 @@ int BlockLocalPositionEstimator::flowMeasure(Vector<float, n_y_flow> &y)
 		return -1;
 	}
 
-	float d = agl() * cosf(_sub_att.get().roll) * cosf(_sub_att.get().pitch);
+	matrix::Quaternion<float> q(&_sub_att.get().q[0]);
+	matrix::Euler<float> euler(q);
+
+	float d = agl() * cosf(euler(0)) * cosf(euler(1));
 
 	// check for global accuracy
 	if (_gpsInitialized) {
@@ -104,8 +107,7 @@ int BlockLocalPositionEstimator::flowMeasure(Vector<float, n_y_flow> &y)
 		0);
 
 	// rotation of flow from body to nav frame
-	Matrix3f R_nb(_sub_att.get().R);
-	Vector3f delta_n = R_nb * delta_b;
+	Vector3f delta_n = _R_att * delta_b;
 
 	// flow integration
 	_flowX += delta_n(0);
@@ -138,7 +140,7 @@ void BlockLocalPositionEstimator::flowCorrect()
 
 	SquareMatrix<float, n_y_flow> R;
 	R.setZero();
-	float d = agl() * cosf(_sub_att.get().roll) * cosf(_sub_att.get().pitch);
+	float d = agl() * cosf(_eul(0)) * cosf(_eul(1));
 	float flow_xy_stddev = _flow_xy_stddev.get() + _flow_xy_d_stddev.get() * d ;
 	R(Y_flow_x, Y_flow_x) = flow_xy_stddev * flow_xy_stddev;
 	R(Y_flow_y, Y_flow_y) = R(Y_flow_x, Y_flow_x);
