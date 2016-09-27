@@ -321,7 +321,6 @@ void Simulator::handle_message(mavlink_message_t *msg, bool publish)
 			hil_attitude.q[1] = q(1);
 			hil_attitude.q[2] = q(2);
 			hil_attitude.q[3] = q(3);
-			hil_attitude.q_valid = true;
 
 			// always publish ground truth attitude message
 			int hilstate_multi;
