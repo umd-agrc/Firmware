@@ -95,6 +95,7 @@ struct mission_item_s {
 	double lon;			/**< longitude in degrees				*/
 	float altitude;			/**< altitude in meters	(AMSL)			*/
 	float yaw;			/**< in radians NED -PI..+PI, NAN means don't change yaw		*/
+	bool disable_mc_yaw;		/**< enable weather-vane				*/
 	float loiter_radius;		/**< loiter radius in meters, 0 for a VTOL to hover     */
 	int8_t loiter_direction;	/**< 1: positive / clockwise, -1, negative.		*/
 	bool loiter_exit_xtrack;	/**< exit xtrack location: 0 for center of loiter wp, 1 for exit location */
