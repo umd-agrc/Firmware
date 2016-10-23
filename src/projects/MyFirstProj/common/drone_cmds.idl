@@ -1,0 +1,11 @@
+#ifndef DRONE_CMDS_IDL
+#define DRONE_CMDS_IDL
+
+#include "AEEStdDef.idl"
+
+interface drone_cmds {
+  // Demonstrate a simple action
+  uint32 bark();
+};
+
+#endif /* DRONE_CMDS_IDL */

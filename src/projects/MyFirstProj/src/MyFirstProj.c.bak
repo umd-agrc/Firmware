@@ -1,0 +1,301 @@
+#include <errno.h>
+#include <fcntl.h>
+#include <math.h>
+#include <poll.h>
+#include <px4_posix.h>
+#include <px4_config.h>
+#include <px4_tasks.h>
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+
+#include <drivers/drv_hrt.h>
+#include <modules/muorb/krait/uORBKraitFastRpcChannel.cpp>
+#include <modules/uORB/uORBManager.hpp>
+#include <muorb/px4muorb_KraitRpcWrapper.hpp>
+#include <muorb/uORBKraitFastRpcChannel.hpp>
+#include <uORB/uORB.h>
+#include <uORB/topics/manual_control_setpoint.h>
+#include <uORB/topics/parameter_update.h>
+#include <uORB/topics/sensor_combined.h>
+#include <uORB/topics/vehicle_attitude.h>
+#include <uORB/topics/vehicle_attitude_setpoint.h>
+#include <uORB/topics/vehicle_rates_setpoint.h>
+#include <uORB/topics/vehicle_status.h>
+#include <systemlib/err.h>
+#include <systemlib/param/param.h>
+#include <systemlib/perf_counter.h>
+#include <systemlib/systemlib.h>
+
+/* process-specific header files */
+#include "inc/control.h"
+#include "inc/params.h"
+
+
+__EXPORT int MyFirstProj_main(int argc, char *argv[]);
+
+/* Variables */
+static bool thread_should_exit = false; /* Daemon exit flag */
+static bool thread_running = false; /* Daemon status flag */
+static int daemon_task; /* Handle of daemon task/thread */
+static struct params p;
+static struct param_handles ph;
+
+/* Display usage directions */
+static void usage(const char *reason) {
+	if (reason) {
+		fprintf(stderr, "%s\n", reason);
+	}
+
+	fprintf(stderr, "usage: MyFirstProj 'start'|'stop'|'status'\n\n");
+	exit(1);
+}
+
+int MyFirstProj_thread_main(int argc, char *argv[]) {
+	/* read arguments */
+	bool verbose = false;
+
+	for (int i=1; i<argc; i++) {
+		if (strcmp(argv[i],"-v") == 0 || strcmp (argv[i], "--verbose") == 0) {
+			verbose = true;
+		}
+	}
+	
+	/* Welcome user (warnx prints a line, including an appended\n, with variable arguments */
+	warnx("[MyFirstProj] started");
+
+	/* initialize parameters, first the handles, then the values */
+	parameters_init(&ph);
+	parameters_update(&ph, &p);
+
+	/*
+	 * Publish/subscribe design pattern
+	 */
+	struct vehicle_attitude_s att;
+	memset(&att, 0, sizeof(att));
+	struct vehicle_attitude_setpoint_s att_sp;
+	memset(&att_sp, 0, sizeof(att_sp));
+	struct vehicle_rates_setpoint_s rates_sp;
+	memset(&rates_sp, 0, sizeof(rates_sp));
+	struct manual_control_setpoint_s manual_sp;
+	memset(&manual_sp, 0, sizeof(manual_sp));
+	struct vehicle_status_s vstatus;
+	memset(&vstatus, 0, sizeof(vstatus));
+	
+	/* Output structs. This is sent to the mixer */
+	// FIXME maybe gonna do a custom actuator controls command
+	struct actuator_controls_s actuators;
+	memset(&actuators, 0, sizeof(actuators));
+
+	/* Publish actuator controls with zero values */
+	for (unsigned i=0; i < NUM_ACTUATOR_CONTROLS; i++) {
+		actuators.control[i] = 0.0f;
+	}
+
+	/* Advertise that this controller will publish actuator control
+	 * values and the rate setpoint
+	 */	
+	orb_advert_t actuator_pub = orb_advertise(ORB_ID_VEHICLE_ATTITUDE_CONTROLS, &actuators);
+	orb_advert_t rates_pub = orb_advertise(ORB_ID(vehicle_rates_setpoint), &rates_sp);
+
+	int att_sub = orb_subscribe(ORB_ID(vehicle_attitude));
+	int manual_sp_sub = orb_subscribe(ORB_ID(manual_control_setpoint));
+	int vstatus_sub = orb_subscribe(ORB_ID(vehicle_status));
+	int param_sub = orb_subscribe(ORB_ID(parameter_update));
+
+	/* setup of loop */
+	struct pollfd fds[2] = {{ .fd = param_sub, .events = POLLIN },
+			{ .fd = att_sub, .events = POLLIN }
+	};
+
+	/*
+	 * Start the RPC driver
+	 */
+	if (uOrb::KraitFastRpcChannel::isInstance()) {
+		PX4_WARN("muorb already running");
+	} else {
+		// Register the fast rpc channel with uORB
+		uORB::Manager::get_instance()->set_uorb_communicator(uORB::KraitFastRpcChannel::GetInstance());
+		uORB::KraitFastRpcChannel::GetInstance()->Start();
+	}
+
+	while (!thread_should_exit) {
+		/*
+		 * Wait for a sensor or param update, check for exit condition
+		 * every 500ms. This means that the execution will block here
+		 * without consuming any resources, but will continue to execute
+		 * the very moment a new attitude measurement or a param update is
+		 * published. So no latency in contrast to the polling design
+		 * pattern (do not confuse the poll() system call with polling).
+		 *
+		 * This design pattern makes the controller agnostic of the
+		 * attitude update speed - it runs as fast as the attitude updates
+		 * with minimal latency.
+		 */
+		
+		int ret = poll(fds, 2, 500);
+		
+		if (ret < 0) {
+
+			/* Poll error
+			 */
+			warnx("poll error");
+
+		} else if (ret == 0) {
+			/* No return value == nothing changed for 500 ms, ignore */
+
+		} else {
+
+			/* Only update parameters if they changed */
+			if (fds[0].revents & POLLIN) {
+				/* read from param to clear updated flag (uORB API requirement) */
+				struct parameter_update_s update;
+				orb_copy(ORB_ID(parameter_update), param_sub, &update);
+
+				/* if a param update occurred, re-read our parameters */
+				parameters_update(&ph, &p);
+
+			}
+
+			/* Only run controller if attitude changed */
+			if (fds[1].revents & POLLIN) {
+				/* Check if there is a new position measurement or position
+				 * setpoint
+				 */					
+				bool manual_sp_updated;
+				orb_check(manual_sp_sub, &manual_sp_updated);
+
+				/* get a local copy of attitude */
+				orb_copy(ORB_ID(vehicle_attitude, att_sub, &att);
+				
+				if (manual_sp_updated) {
+					/* get the user-defined input */
+					orb_copy(ORB_ID(manual_control_setpoint), manual_sp_sub,
+						&manual_sp);
+				}
+
+				/* check if the throttle was ever more than 50% - go later only
+				 * to failsafe if yes
+				 */
+				if (isfinite(manual_sp.z) &&
+					 (manual_sp.z >= 0.6f) &&
+					 (manual_sp.z <= 1.0f)) {
+				}
+
+				/* get the system status and the flight mode we're in */
+				orb_copy(ORB_ID(vehicle_status), vstatus_sub, &vstatus);
+				
+				/* publish rates */
+				/* publish rates */
+				orb_publish(ORB_ID(vehicle_rates_setpoint), rates_pub, &rates_sp);
+
+				/* sanity check and publish actuator outputs */
+				if (isfinite(actuators.control[0]) &&
+						isfinite(actuators.control[1]) &&
+						isfinite(actuators.control[2]) &&
+						isfinite(actuators.control[3])) {
+					orb_publish(ORB_ID_VEHICLE_ATTITUDE_CONTROLS, actuator_pub, &actuators);
+
+					if (verbose) {
+						warnx("published");
+					}
+
+				}
+
+				// Send shit over KraitFastRpcChannel
+				// muorb/krait/uORBKraitFastRpcChannel.[cpp|h]
+				// uORB::KraitFastRpcChannel::GetInstance()->send_message();
+
+			}
+
+		}
+
+	}
+
+	printf("[MyFirstProj] exiting, killing muorb and stopping all motors.\n");
+
+	/*
+	 * Stop the RPC driver
+	 */
+	if (uOrb::KraitFastRpcChannel::isInstance()) {
+		uORB::KraitFastRpcChannel::GetInstance()->Stop();
+	} else {
+		PX4_WARN("muorb not running");
+	}
+
+	thread_running = false;
+
+	/* kill all outputs */
+	for (unsigned i = 0; i < NUM_ACTUATOR_CONTROLS; i++) {
+		actuators.control[i] = 0.0f;
+	}
+
+	orb_publish(ORB_ID_VEHICLE_ATTITUDE_CONTROLS, actuator_pub, &actuators);
+
+	fflush(stdout);
+
+	return 0;
+	
+}
+
+int MyFirstProj_main(int argc, char *argv[]) {
+
+  if (argc < 2) {
+    usage("missing command");
+    return -EINVAL;
+  }
+
+  /*
+   * Return sensor values
+   */
+  if(!strcmp(argv[1],"start")) {
+		if (thread_running) {
+			printf("MyFirstProj already running\n");
+		}
+
+		thread_should_exit = false;
+		daemon_task = px4_task_spawn_cmd("MyFirstProj",
+			SCHED_DEFAULT,
+			SCHED_PRIORITY_MAX - 20,
+			2048,
+			MyFirstProj_thread_main,
+			(argv) ? (char * const *)&argv[2] : (char * const *) NULL);
+		thread_running = true;
+   	exit(0); 
+  }
+
+  /*
+   * Send sample UART values to ESC
+   */
+  if(!strcmp(argv[1],"stop")) {
+		thread_should_exit = true;
+   	exit(0); 
+  }
+
+	if (!strcmp(argv[1],"status")) {
+		if (thread_running) {
+			printf("\tMyFirstproj is running\n");
+			if (uORB::KraitFastRpcChannel::isInstance()) {
+				PX4_WARN("muorb running");
+			} else {
+				PX4_WARN("muorb not running");
+			}
+		} else {
+			printf("\tMyFirstProj not started\n");
+		}
+
+   	exit(0); 
+	}
+
+  usage("unrecognized command");
+  exit(1);
+}
+
+int control_attitude() {
+	return OK;
+}
+
+int control_heading(){
+	return OK;
+}
