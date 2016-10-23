@@ -1,0 +1,254 @@
+This is METAFONT, Version 2.718281 (TeX Live 2013/Debian) (base=mf 2016.1.11)  12 OCT 2016 18:32
+**adsp_proc/src/MyFirstProj_adsp.c adsp_proc/src/messenger.c
+(adsp_proc/src/MyFirstProj_adsp.c
+>> //TODO.figure.out.how
+! Isolated expression.
+<to be read again> 
+                   to
+l.1 // TODO figure out how to
+                              call callback
+? q
+OK, entering batchmode...
+! Extra tokens will be flushed.
+<to be read again> 
+                   to
+l.1 // TODO figure out how to
+                              call callback
+I've just read as much of that statement as I could fathom,
+so a semicolon should have been next. It's very puzzling...
+but I'll try to get myself back together, by ignoring
+everything up to the next `;'. Please insert a semicolon
+now in front of anything that you don't want me to delete.
+(See Chapter 27 of The METAFONTbook for an example.)
+
+! Enormous number has been reduced.
+l.12 #define SERIAL_WRITE_DELAY_IN_USECS (8000
+                                              *10)
+I can't handle numbers bigger than about 4095.99998;
+so I've changed your constant to that maximum amount.
+
+>> /*
+>> Define.callback
+! Not implemented: (unknown numeric)*(unknown numeric).
+<to be read again> 
+                   to
+l.21  * Define callback to
+                           be triggered when all data is written to serial port
+I'm afraid I don't know how to apply that operation to that
+combination of types. Continue, and I'll return the second
+argument (see above) as the result of the operation.
+
+>> Define.callback
+! Isolated expression.
+<to be read again> 
+                   to
+l.21  * Define callback to
+                           be triggered when all data is written to serial port
+I couldn't find an `=' or `:=' after the
+expression that is shown above this error message,
+so I guess I'll just ignore it and carry on.
+
+! Extra tokens will be flushed.
+<to be read again> 
+                   to
+l.21  * Define callback to
+                           be triggered when all data is written to serial port
+I've just read as much of that statement as I could fathom,
+so a semicolon should have been next. It's very puzzling...
+but I'll try to get myself back together, by ignoring
+everything up to the next `;'. Please insert a semicolon
+now in front of anything that you don't want me to delete.
+(See Chapter 27 of The METAFONTbook for an example.)
+
+>> SERIAL_DATA_BUFFER_LENGTH
+! Improper subscript has been replaced by zero.
+l.42 	char rx_buffer[SERIAL_DATA_BUFFER_LENGTH]
+                                               ;
+A bracketed subscript must have a known numeric value;
+unfortunately, what I found was the value that appears just
+above this error message. So I'll try a zero subscript.
+
+>> rx_buffer0
+! Not implemented: char(unknown numeric).
+<to be read again> 
+                   ;
+l.42 	char rx_buffer[SERIAL_DATA_BUFFER_LENGTH];
+                                                
+I'm afraid I don't know how to apply that operation to that
+particular type. Continue, and I'll simply return the
+argument (shown above) as the result of the operation.
+
+>> rx_buffer0
+! Isolated expression.
+<to be read again> 
+                   ;
+l.42 	char rx_buffer[SERIAL_DATA_BUFFER_LENGTH];
+                                                
+I couldn't find an `=' or `:=' after the
+expression that is shown above this error message,
+so I guess I'll just ignore it and carry on.
+
+>> unsigned.int.num_bytes_written
+! Isolated expression.
+<to be read again> 
+                   ;
+l.43 	unsigned int num_bytes_written;
+                                     
+I couldn't find an `=' or `:=' after the
+expression that is shown above this error message,
+so I guess I'll just ignore it and carry on.
+
+>> int.runs
+! Isolated expression.
+<to be read again> 
+                   ,
+l.45 	int runs,
+                i;
+I couldn't find an `=' or `:=' after the
+expression that is shown above this error message,
+so I guess I'll just ignore it and carry on.
+
+! Extra tokens will be flushed.
+<to be read again> 
+                   ,
+l.45 	int runs,
+                i;
+I've just read as much of that statement as I could fathom,
+so a semicolon should have been next. It's very puzzling...
+but I'll try to get myself back together, by ignoring
+everything up to the next `;'. Please insert a semicolon
+now in front of anything that you don't want me to delete.
+(See Chapter 27 of The METAFONTbook for an example.)
+
+>> LOG_INFO
+! Isolated expression.
+<to be read again> 
+                   (
+l.47 	LOG_INFO(
+               "Beginning esc write read callback");
+I couldn't find an `=' or `:=' after the
+expression that is shown above this error message,
+so I guess I'll just ignore it and carry on.
+
+! Extra tokens will be flushed.
+<to be read again> 
+                   (
+l.47 	LOG_INFO(
+               "Beginning esc write read callback");
+I've just read as much of that statement as I could fathom,
+so a semicolon should have been next. It's very puzzling...
+but I'll try to get myself back together, by ignoring
+everything up to the next `;'. Please insert a semicolon
+now in front of anything that you don't want me to delete.
+(See Chapter 27 of The METAFONTbook for an example.)
+
+>> //Try
+! Isolated expression.
+<to be read again> 
+                   to
+l.49 	// Try to
+                open uart port
+I couldn't find an `=' or `:=' after the
+expression that is shown above this error message,
+so I guess I'll just ignore it and carry on.
+
+! Extra tokens will be flushed.
+<to be read again> 
+                   to
+l.49 	// Try to
+                open uart port
+I've just read as much of that statement as I could fathom,
+so a semicolon should have been next. It's very puzzling...
+but I'll try to get myself back together, by ignoring
+everything up to the next `;'. Please insert a semicolon
+now in front of anything that you don't want me to delete.
+(See Chapter 27 of The METAFONTbook for an example.)
+
+>> LOG_INFO
+! Isolated expression.
+<to be read again> 
+                   (
+l.51 	LOG_INFO(
+               "Opening %s O_RDWR mode %s",
+I couldn't find an `=' or `:=' after the
+expression that is shown above this error message,
+so I guess I'll just ignore it and carry on.
+
+! Extra tokens will be flushed.
+<to be read again> 
+                   (
+l.51 	LOG_INFO(
+               "Opening %s O_RDWR mode %s",
+I've just read as much of that statement as I could fathom,
+so a semicolon should have been next. It's very puzzling...
+but I'll try to get myself back together, by ignoring
+everything up to the next `;'. Please insert a semicolon
+now in front of anything that you don't want me to delete.
+(See Chapter 27 of The METAFONTbook for an example.)
+
+>> //Write
+>> read
+! Not implemented: (unknown numeric)and(unknown numeric).
+<to be read again> 
+                   from
+l.55 	// Write and read from
+                             open serial port
+I'm afraid I don't know how to apply that operation to that
+combination of types. Continue, and I'll return the second
+argument (see above) as the result of the operation.
+
+>> read
+! Isolated expression.
+<to be read again> 
+                   from
+l.55 	// Write and read from
+                             open serial port
+I couldn't find an `=' or `:=' after the
+expression that is shown above this error message,
+so I guess I'll just ignore it and carry on.
+
+! Extra tokens will be flushed.
+<to be read again> 
+                   from
+l.55 	// Write and read from
+                             open serial port
+I've just read as much of that statement as I could fathom,
+so a semicolon should have been next. It's very puzzling...
+but I'll try to get myself back together, by ignoring
+everything up to the next `;'. Please insert a semicolon
+now in front of anything that you don't want me to delete.
+(See Chapter 27 of The METAFONTbook for an example.)
+
+>> !
+! Undefined condition will be treated as `false'.
+<to be read again> 
+                   (
+l.58 	if !(
+           serial_fd < SUCCESS) {
+The expression shown above should have had a definite
+true-or-false value. I'm changing it to `false'.
+
+! Missing `:' has been inserted.
+<to be read again> 
+                   (
+l.58 	if !(
+           serial_fd < SUCCESS) {
+There should've been a colon after the condition.
+I shall pretend that one was there.
+
+)
+! Incomplete if; all text was ignored after line 58.
+<inserted text> 
+                fi
+<*> adsp_proc/src/MyFirstProj_adsp.c
+                                     adsp_proc/src/messenger.c
+The file ended while I was skipping conditional text.
+This kind of error happens when you say `if...' and forget
+the matching `fi'. I've inserted a `fi'; this might work.
+
+! Emergency stop.
+<*> ...yFirstProj_adsp.c adsp_proc/src/messenger.c
+                                                  
+*** (job aborted, no legal end found)
+
+
