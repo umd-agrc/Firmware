@@ -1,0 +1,12 @@
+#ifndef EXAMPLE_INTERFACE_IDL
+#define EXAMPLE_INTERFACE_IDL
+
+#include "AEEStdDef.idl"
+
+interface uart_interface{
+  uint32 esc_read();
+  uint32 esc_write();
+  uint32 esc_write_read();
+};
+
+#endif /*EXAMPLE_INTERFACE_IDL*/
