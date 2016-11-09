@@ -6,7 +6,6 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PX4_SOURCE_DIR}/cmake/cmake_hexago
 
 set(config_generate_parameters_scope ALL)
 
-<<<<<<< HEAD
 # Get $QC_SOC_TARGET from environment if existing.
 if (DEFINED ENV{QC_SOC_TARGET})
 	set(QC_SOC_TARGET $ENV{QC_SOC_TARGET})
@@ -15,8 +14,6 @@ else()
 endif()
 # Set build for Snapdragon Flight
 set(SNAPDRAGON "1")
->>>>>>> 405b9b3... doin it
-
 set(CONFIG_SHMEM "1")
 
 # This definition allows to differentiate if this just the usual POSIX build

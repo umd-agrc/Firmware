@@ -24,16 +24,9 @@ SFUartDriver::SFUartDriver(const char* port){
   m_dev_port = port;
 }
 
-px4::AppState SFUartDriver::appState;
-
-SFUartDriver::SFUartDriver(char* port){
-  memset(dev_port,0,sizeof(dev_port));
-  strcpy(dev_port,port);
-}
 
 SFUartDriver::SFUartDriver(void){
-  memset(dev_port,0,sizeof(dev_port));
-  strcpy(dev_port,DEFAULT_ELKA_SERIAL_PATH);
+  m_dev_port = (const char *)DEFAULT_ELKA_SERIAL_PATH;
 }
 
 SFUartDriver::~SFUartDriver(){}
