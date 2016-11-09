@@ -1,4 +1,5 @@
 #include <px4_app.h>
+#include <px4_defines.h>
 #include <px4_getopt.h>
 #include <px4_log.h>
 #include <px4_middleware.h>
@@ -13,7 +14,9 @@
 // Handler for daemon_task
 static int daemon_task;
 
-extern "C" __EXPORT int SFUart_main(int argc, char **argv);
+extern "C" {
+  __EXPORT int SFUart_main(int argc, char **argv);
+}
 
 static void usage() {
   PX4_INFO("usage: MyFirstProj [start|stop|status]");
@@ -47,7 +50,7 @@ int SFUart_entry(int argc, char *argv[]) {
 int SFUart_main(int argc, char *argv[]) {
   if (argc < 2) {
     usage();
-    return ERROR;
+    return PX4_ERROR;
   }
 
   if (!strcmp(argv[1],"start")) {
@@ -77,6 +80,6 @@ int SFUart_main(int argc, char *argv[]) {
   }
   
   usage();
-  return ERROR;
+  return PX4_ERROR;
 }
 

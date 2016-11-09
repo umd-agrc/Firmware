@@ -6,6 +6,9 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PX4_SOURCE_DIR}/cmake/cmake_hexago
 
 set(config_generate_parameters_scope ALL)
 
+# Set build for Snapdragon Flight
+set(SNAPDRAGON "1")
+
 set(CONFIG_SHMEM "1")
 
 # This definition allows to differentiate if this just the usual POSIX build
@@ -13,8 +16,7 @@ set(CONFIG_SHMEM "1")
 add_definitions(
 	-D__PX4_POSIX_EAGLE
     -D__USING_SNAPDRAGON_LEGACY_DRIVER
-	)
-
+	) 
 set(config_module_list
 	drivers/device
 	drivers/blinkm
@@ -67,4 +69,8 @@ set(config_module_list
 	platforms/common
 	platforms/posix/px4_layer
 	platforms/posix/work_queue
+
+  projects/SnapdragonSerialFramework/posix
+  projects/MyFirstProj
+  projects/SampleListener
 	)
