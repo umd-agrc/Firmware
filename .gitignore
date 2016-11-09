@@ -15,6 +15,16 @@
 .project
 .settings
 .swp
+*.swg
+*.swh
+*.swi
+*.swj
+*.swk
+*.swl
+*.swm
+*.swn
+*.swo
+*.swp
 .~lock.*
 Archives/*
 Build/*

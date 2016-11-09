@@ -15,3 +15,9 @@ set(CONFIG_SHMEM "1")
 add_definitions(
 	-D__PX4_POSIX_EAGLE
 )
+
+set(config_module_list
+  ${config_module_list}
+
+  projects/MyFirstProj
+)

@@ -105,7 +105,12 @@ set(config_module_list
 	# sources for muorb over fastrpc
 	#
 	modules/muorb/adsp
-	)
+
+  #
+  # My projects
+  #
+  projects/SnapdragonSerialFramework/qurt
+)
 
 set(config_df_driver_list
 	mpu9250

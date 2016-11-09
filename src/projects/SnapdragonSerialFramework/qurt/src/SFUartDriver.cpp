@@ -1,25 +1,30 @@
-#include "../inc/SFUartDriver.h"
-#include "../../common/status.h"
-#include <px4_log.h>
-#include <unistd.h>
-#include <stdio.h>
-#include <string.h>
 #include "modules/uORB/uORB.h"
 #include "px4_middleware.h"
 #include "px4_defines.h"
-#include <stdlib.h>
+
+#include <dev_fs_lib_serial.h>
 #include <drivers/drv_hrt.h>
+#include <fcntl.h>
+#include <px4_log.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+/* process-specific header files */
+#include "../inc/SFUartDriver.h"
+#include "../../common/status.h"
+#include <projects/sysdefs.h>
 
 px4::AppState SFUartDriver::appState;
 
-SFUartDriver::SFUartDriver(char* port){
-  memset(dev_port,0,sizeof(dev_port));
-  strcpy(dev_port,port);
+/////// Public methods ////////////
+SFUartDriver::SFUartDriver(const char* port){
+  m_dev_port = port;
 }
 
 SFUartDriver::SFUartDriver(void){
-  memset(dev_port,0,sizeof(dev_port));
-  strcpy(dev_port,DEFAULT_ELKA_SERIAL_PATH);
+  m_dev_port = (const char *)DEFAULT_ELKA_SERIAL_PATH;
 }
 
 SFUartDriver::~SFUartDriver(){}
@@ -30,6 +35,72 @@ uint32_t SFUartDriver::start(void){
 
 int SFUartDriver::main(){
   appState.setRunning(true);
+
+  if (uart_initialize(m_dev_port) < 0) {
+    PX4_ERR("Failed to initialize UART.");
+    return PX4_ERROR;
+  }
+
+  // Set up subscribers
+  // Set these up first to avoid deadlock
+  while ((m_sub_vc = orb_subscribe(ORB_ID(vehicle_command)))
+            == PX4_ERROR && !appState.exitRequested()) {
+    PX4_ERR("Error subscribing to vehicle_command topic, retrying");
+  }
+
+  // Set up publishers
+  m_pub_vca =
+    orb_advertise(ORB_ID(vehicle_command_ack), &m_vca);
+
+  if (m_pub_vca == 0) {
+    PX4_ERR("Error publishing vehicle_command_ack");
+    return PX4_ERROR;
+  }
+
+  int i=0;
+  while (!appState.exitRequested()) {
+    bool updated = false;
+
+    if(orb_check(m_sub_vc, &updated) == 0) {
+      if (updated) {
+        PX4_DEBUG("[%d] vehicle_command is updated... reading new value",i);
+        if (orb_copy(ORB_ID(vehicle_command), m_sub_vc, &m_vc) != 0) {
+          m_vca.command = vehicle_command_s::VEHICLE_CMD_RESULT_FAILED;
+          m_vca.result = vehicle_command_ack_s::VEHICLE_RESULT_FAILED;
+          PX4_ERR("[%d] Error calling orb copy for vehicle_command... ",i);
+          break;
+        } else {
+          if (m_vc.target_system == SYS_SFUART) {
+            m_vca.command = m_vc.command;
+            m_vca.result = vehicle_command_ack_s::VEHICLE_RESULT_ACCEPTED;
+          }
+        }
+      } else {
+        PX4_DEBUG("[%d] vehicle_command is not updated", i);
+        // No ack necessary
+      }
+
+      if (m_pub_vca != nullptr) {
+        orb_publish(ORB_ID(vehicle_command_ack), m_pub_vca, &m_vca);
+      } else { // should not happen, should exit before this!
+        m_pub_vca =
+          orb_advertise(ORB_ID(vehicle_command_ack), &m_vca);
+
+        if (m_pub_vca == 0) {
+          PX4_ERR("Error publishing vehicle_command_ack");
+          return PX4_ERROR;
+        }
+      }
+    } else {
+      PX4_ERR(
+        "[%d] Error checking the updated status for vehicle command...",i);
+      break;
+    }
+    ++i;
+    usleep(100000);
+  }
+
+  appState.setRunning(false);
   return SUCCESS;
 }
 
@@ -74,12 +145,12 @@ uint32_t SFUartDriver::test_port(void){
 		} else {
 			PX4_ERR("Failed to write to %s", DEFAULT_ELKA_SERIAL_PATH);
 			close(serial_fd);
-			result = ERROR;
+			result = PX4_ERROR;
 		}
 
 	} else {
 
-		result = ERROR;
+		result = PX4_ERROR;
 
 	}
 
@@ -105,4 +176,50 @@ uint32_t SFUartDriver::uart_write(char* msg, int len){
 uint32_t SFUartDriver::uart_write_read(
       char* msg, int msg_len, char* buf, int buf_len){
   return ENOSYS;
+}
+
+/////// Private methods ////////////
+//TODO
+void SFUartDriver::cb_serial(void *context, char *buffer, size_t num_bytes) {
+  
+}
+
+uint32_t SFUartDriver::health(){return PX4_ERROR;}
+
+int SFUartDriver::uart_initialize(const char *device){
+  // FIXME uncomment once other side of UART is implemented
+  //m_fd = open(device, O_RDWR | O_NONBLOCK);
+  m_fd = open(device, O_RDWR);
+
+  if (m_fd == -1) {
+    PX4_ERR("Failed to open UART.");
+    return ERR_OPEN_UART;
+  }
+
+  struct dspal_serial_ioctl_data_rate rate;
+
+  rate.bit_rate = DSPAL_SIO_BITRATE_115200;
+
+  int ret = ioctl(m_fd, SERIAL_IOCTL_SET_DATA_RATE, (void *)&rate);
+
+  if (ret) {
+    PX4_ERR("Failed to set UART bitrate.");
+    return ERR_SET_DATA_RATE;
+  }
+
+  struct dspal_serial_ioctl_receive_data_callback cb;
+
+  cb.rx_data_callback_func_ptr = cb_serial;
+  ret = ioctl(m_fd, SERIAL_IOCTL_SET_RECEIVE_DATA_CALLBACK, (void *)&cb);
+
+  if (ret) {
+    PX4_ERR("Failed to setup UART flow control options.");
+    return ERR_UART_FLOW_CTL;
+  }
+
+  return SUCCESS;
+}
+
+int SFUartDriver::uart_deinitialize() {
+  return close(m_fd);
 }
