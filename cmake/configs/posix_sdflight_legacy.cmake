@@ -50,6 +50,7 @@ set(config_module_list
 	modules/simulator
 	modules/commander
 	modules/navigator
+  modules/elka/posix
 
 	lib/controllib
 	lib/mathlib
@@ -63,6 +64,7 @@ set(config_module_list
 	lib/tailsitter_recovery
 	lib/version
 	lib/DriverFramework/framework
+  #lib/c-ringbuf
 
 	platforms/common
 	platforms/posix/px4_layer
