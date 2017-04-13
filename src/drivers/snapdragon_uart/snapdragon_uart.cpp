@@ -9,8 +9,9 @@
 #include <cstring>
 
 #include <uORB/uORB.h>
-#include <uORB/topics/vehicle_attitude.h>
-#include <uORB/topics/sensor_combined.h>
+#include <uORB/topics/elka_msg.h>
+#include <uORB/topics/elka_msg_ack.h>
+#include <uORB/topics/input_rc.h>
 
 #include "snapdragon_uart.h"
 #include "snapdragon_uart_manager.h"
@@ -49,21 +50,21 @@ status>");
       }
     }
 
-    int port_num;
-    char dev_name[42];
+    uint8_t port_num;
+    char dev_name[MAX_NAME_LEN];
     if (argc < 3) {
       PX4_WARN("Missing port number specification");
       return PX4_OK;
     }
     
-    int i=2;
+    uint8_t i=2;// Start at argv index
     while (argv[i]) {
-      if (!(port_num = std::atoi(argv[i])) ||
+      if (!(port_num = (uint8_t) std::atoi(argv[i])) ||
           port_num < 1 || port_num > MAX_UART_PORTS) {
         PX4_WARN("Invalid port number specification %s",
             argv[i]);
         continue;
-      } else if (i+2 >= MAX_UART_PORTS) {
+      } else if (i-2 >= MAX_UART_PORTS) {
         PX4_WARN("Too many ports specified");
 
       } else if (mgr !=nullptr
@@ -97,7 +98,7 @@ status>");
 	} else if (!strcmp(argv[1],"stop")) {
     if (argc < 3) {
       // stop all ports
-      for (int i=0; i < MAX_UART_PORTS; i++) {
+      for (uint8_t i=0; i < MAX_UART_PORTS; i++) {
         if (!thread_running[i]) {
           PX4_WARN("uart dev %d already stopped",i);
           return PX4_OK;
@@ -115,9 +116,9 @@ status>");
         return PX4_OK;
       }
     } else {
-      int i=2, port_num;
+      uint8_t i=2, port_num;
       while (argv[i]) {
-        if (!(port_num = std::atoi(argv[i]))) {
+        if (!(port_num = (uint8_t) std::atoi(argv[i]))) {
           PX4_WARN("Invalid stop command, port %s not available",
             argv[i]);
           i++;
@@ -161,58 +162,83 @@ status>");
 }
 
 int snapdragon_uart_dev_loop(int argc, char **argv) {
-  char dev_nm[42];
-  int port_num = std::atoi(argv[0]);
+  char dev_nm[MAX_NAME_LEN];
+  uint8_t port_num = (uint8_t)std::atoi(argv[0]),
+          buf_type = UINT8_ARRAY; // FIXME why is this not creating UINT8 array?
 
   sprintf(dev_nm,"/dev/tty-%d",port_num);
 
   PX4_INFO("Starting port %s for uart", dev_nm);
   uart::DeviceNode *snapdragon = mgr->get_uart_dev(
-      port_num, dev_nm);
+      port_num, dev_nm, buf_type);
 
   snapdragon->assign_read_callback();
 
   // Define poll_return for defined file descriptors
   int poll_ret;
 
-  // Subscribe to sensor_combined topic
-  int sensor_sub_fd = orb_subscribe(ORB_ID(sensor_combined));
-  // Limit update rate to 5Hz
-  orb_set_interval(sensor_sub_fd, 200);
-  // Define sensor_combined_s struct to update
-  struct sensor_combined_s raw;
+  // Subscribe to elka msg, elka msg ack, and input_rc (TODO only if necessary)
+  int input_rc_sub_fd = orb_subscribe(ORB_ID(input_rc));
+  int elka_ack_sub_fd = orb_subscribe(ORB_ID(elka_msg_ack));
+  int elka_sub_fd = orb_subscribe(ORB_ID(elka_msg));
+  // Set update rate to 100Hz
+  orb_set_interval(input_rc_sub_fd, 10);
+  orb_set_interval(elka_ack_sub_fd, 10);
+  orb_set_interval(elka_sub_fd, 10);
 
-  // Advertise attitude topic
-  struct vehicle_attitude_s att;
-  memset(&att, 0, sizeof(att));
-  orb_advert_t att_pub = orb_advertise(
-      ORB_ID(vehicle_attitude), &att);
+  struct input_rc_s input_rc;
+  struct elka_msg_ack_s elka_ack_snd_px4, elka_ack_rcv_px4,
+                        elka_ack_snd_elka, elka_ack_rcv_elka;
+  struct elka_msg_s elka_snd_px4, elka_snd_elka, 
+                    elka_rcv_px4, elka_rcv_elka;
+  memset(&input_rc, 0, sizeof(input_rc));
+  memset(&elka_ack_snd_px4, 0, sizeof(elka_ack_snd_px4));
+  memset(&elka_ack_rcv_px4, 0, sizeof(elka_ack_rcv_px4));
+  memset(&elka_ack_snd_elka, 0, sizeof(elka_ack_snd_elka));
+  memset(&elka_ack_rcv_elka, 0, sizeof(elka_ack_rcv_elka));
+  memset(&elka_snd_px4, 0, sizeof(elka_snd_px4));
+  memset(&elka_rcv_px4, 0, sizeof(elka_rcv_px4));
+  memset(&elka_snd_elka, 0, sizeof(elka_snd_elka));
+  memset(&elka_rcv_elka, 0, sizeof(elka_rcv_elka));
+  
+  // Advertise elka msg and elka msg ack
+  orb_advert_t elka_ack_pub = orb_advertise(
+      ORB_ID(elka_msg_ack), &elka_ack_snd_px4);
+  orb_advert_t elka_msg_pub = orb_advertise(
+      ORB_ID(elka_msg), &elka_snd_px4);
+  //orb_advert_t elka_ack_pub = orb_advertise(
+  //    ORB_ID(elka_msg_ack), NULL);
+  //orb_advert_t elka_msg_pub = orb_advertise(
+  //    ORB_ID(elka_msg), NULL);
 
   // Define topic subscribers to wait for with polling
   px4_pollfd_struct_t fds[] = {
-    {.fd = sensor_sub_fd, .events = POLLIN},
+    {.fd = input_rc_sub_fd, .events = POLLIN},
+    {.fd = elka_ack_sub_fd, .events = POLLIN},
+    {.fd = elka_sub_fd, .events = POLLIN},
   };
 
   int error_counter = 0;
 
-  //FIXME debugging uart
-  char debug_tx_buf[1024] = "john henry";
-  //char debug_rx_buf[1024];
+  thread_running[port_num] = true;
+
+  uint8_t parse_res; 
+
+  //FIXME debugging
+  // Set PX4 elka module to paused
+  snapdragon->set_state_msg(elka_snd_px4, STATE_PAUSE, true);
 
   while (!thread_should_exit[port_num]) {
+    snapdragon->update_time();
 
-    //FIXME debugging uart
-    snapdragon->write(debug_tx_buf);
-    usleep(1000000);
-    //snapdragon->read(debug_rx_buf);
-
-    // Wait for sensor update of 1 file descriptor for 1000ms
-    poll_ret = px4_poll(fds, 1, 1000);
+    // Wait for up to 500ms for data
+    // FIXME this should be tied to msg threshold
+    poll_ret = px4_poll(&fds[0], sizeof(fds)/sizeof(fds[0]), 500);
 
     // Handle the poll result
     if (poll_ret == 0) {
       // None of our providers is giving us data
-      PX4_ERR("Got no data within a second");
+      PX4_ERR("Got no data");
     } else if (poll_ret < 0) {
       // Should be an emergency
       if (error_counter < 10 || error_counter % 50 == 0) {
@@ -222,23 +248,58 @@ int snapdragon_uart_dev_loop(int argc, char **argv) {
 
       error_counter++;
     } else {
+      if (fds[0].revents & POLLIN) { // input_rc
+        orb_copy(ORB_ID(input_rc), input_rc_sub_fd, &input_rc);
 
-      if (fds[0].revents & POLLIN) {
-        // Obtained data for the first file descriptor
-        orb_copy(ORB_ID(sensor_combined), sensor_sub_fd, &raw);
-        // Copy sensors raw data into local buffer
-        // TODO Here will copy into DeviceNode ringbuf
-        PX4_INFO("Accelerometer:\t%8.4f\t%8.4f\t%8.4f",
-            (double)raw.accelerometer_m_s2[0],
-            (double)raw.accelerometer_m_s2[1],
-            (double)raw.accelerometer_m_s2[2]);
+        // TODO check paused before setting and sending for efficiency
+        // Set PX4 elka module to paused
+        snapdragon->set_state_msg(elka_snd_px4, STATE_PAUSE, true);
+      }
+      
+      if (fds[1].revents & POLLIN) { // elka_msg_ack
+        orb_copy(ORB_ID(elka_msg_ack), elka_ack_sub_fd, &elka_ack_rcv_px4);
+
+        if (snapdragon->check_ack(elka_ack_rcv_px4, false)
+              == elka_msg_ack_s::ACK_FAILED) {
+          PX4_ERR("Failed acknowledgement for msg id: %d",
+              elka_ack_rcv_px4.msg_id);
+        }
       }
 
-      // Set att and publish this information for other apps
-      att.rollspeed = raw.accelerometer_m_s2[0];
-      att.pitchspeed = raw.accelerometer_m_s2[1];
-      att.yawspeed = raw.accelerometer_m_s2[2];
-      orb_publish(ORB_ID(vehicle_attitude), att_pub, &att);
+      if (fds[2].revents & POLLIN) { // elka_msg
+        // TODO Check message timestamp
+        //if (elka_rcv.timestamp - snapdragon->_now < msg_threshold) {
+          orb_copy(ORB_ID(elka_msg), elka_sub_fd, &elka_rcv_px4);
+
+          PX4_INFO("ELKA UART message:\n\tmsg_id: %d\n\tmsg_num: %d",
+              elka_rcv_px4.msg_id, elka_rcv_px4.msg_num);
+          print_uint8_array(elka_rcv_px4.data);
+
+          //FIXME debugging uart
+          //snapdragon->write(debug_snd);
+          usleep(5000);
+          //snapdragon->read(debug_rx_buf);
+        //}
+      }
+      
+      // remove and parse message from rx_buf
+      // send ack if the message requires one 
+      if ((parse_res = snapdragon->parse_elka_msg(elka_rcv_px4,elka_ack_snd_px4, true)) ==
+                    MSG_FAILED) {
+        PX4_ERR("Failed message for msg id: %d",
+            elka_rcv_px4.msg_id);
+      } else if (parse_res != MSG_NULL) {
+        orb_publish(ORB_ID(elka_msg_ack), elka_ack_pub, &elka_ack_snd_px4);
+      } 
+      // Check if input_rc msgs are gone, and we can start using our messages
+      // again
+      if (input_rc.timestamp - snapdragon->_now > msg_threshold) {
+        // TODO publish useful message
+        // TODO send useful message thru UART
+        if (false) orb_publish(ORB_ID(elka_msg), elka_msg_pub, &elka_snd_px4);
+      } else {
+        PX4_INFO("paused");
+      }
     }
   }
 
@@ -248,3 +309,4 @@ int snapdragon_uart_dev_loop(int argc, char **argv) {
 
   return PX4_OK;
 }
+

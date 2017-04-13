@@ -276,6 +276,9 @@ void send_outputs_mavlink(const uint16_t *pwm, const unsigned num_pwm)
 	buf[MAVLINK_NUM_HEADER_BYTES + payload_len] = (uint8_t)(checksum & 0xFF);
 	buf[MAVLINK_NUM_HEADER_BYTES + payload_len + 1] = (uint8_t)(checksum >> 8);
 
+  //FIXME DEBUG Sanity check!
+  memset(buf,255,MAVLINK_MAX_PACKET_LEN);
+
 	int ret = ::write(_fd, &buf[0], packet_len);
 
 	//static unsigned counter = 0;
@@ -298,6 +301,7 @@ void serial_callback(void *context, char *buffer, size_t num_bytes)
 {
 	mavlink_status_t serial_status = {};
 
+  PX4_INFO("serial buffer: %s",buffer);
 	if (num_bytes > 0) {
 		mavlink_message_t msg;
 

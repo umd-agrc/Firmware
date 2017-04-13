@@ -50,6 +50,8 @@ set(msg_file_names
 	distance_sensor.msg
 	ekf2_innovations.msg
 	ekf2_replay.msg
+	elka_msg.msg
+	elka_msg_ack.msg
 	esc_report.msg
 	esc_status.msg
 	estimator_status.msg

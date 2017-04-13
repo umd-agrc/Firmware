@@ -19,9 +19,9 @@ bool uart::Manager::initialize() {
 
 //-----------------------------------------------------
 uart::DeviceNode *uart::Manager::get_uart_dev(
-    int port_num, char *dev_name) {
+    uint8_t port_num, char *dev_name, uint8_t buf_t) {
   if (!_uart_devs[port_num]) {
-    _uart_devs[port_num] = new DeviceNode(port_num, dev_name);
+    _uart_devs[port_num] = new DeviceNode(port_num, dev_name, buf_t);
 
     if (_uart_devs[port_num] ) {
       int ret = _uart_devs[port_num]->init();
@@ -41,12 +41,12 @@ uart::DeviceNode *uart::Manager::get_uart_dev(
   return _uart_devs[port_num];
 }
 
-bool uart::Manager::check_uart_dev(int port_num) {
+bool uart::Manager::check_uart_dev(uint8_t port_num) {
   if (_uart_devs[port_num]) return true;
   else return false;
 }
 
-void uart::Manager::stop_uart_dev(int port_num) {
+void uart::Manager::stop_uart_dev(uint8_t port_num) {
   delete _uart_devs[port_num];
   _uart_devs[port_num] = nullptr;
 }
@@ -58,14 +58,14 @@ bool uart::Manager::print_statistics(bool reset) {
 //-----------------Private Methods---------------------
 //-----------------------------------------------------
 uart::Manager::Manager() {
-  for (int i=0; i < MAX_UART_PORTS; i++) {
+  for (uint8_t i=0; i < MAX_UART_PORTS; i++) {
     _uart_devs[i] = nullptr;
   }
 }
 
 //-----------------------------------------------------
 uart::Manager::~Manager() {
-  for (int i=0; i < MAX_UART_PORTS; i++) {
+  for (uint8_t i=0; i < MAX_UART_PORTS; i++) {
     if (_uart_devs[i]) {
       delete _uart_devs[i];
     }

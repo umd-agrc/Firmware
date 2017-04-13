@@ -40,21 +40,22 @@ public:
    * @return DeviceNode with corresponding parameters on success,
    *         nullptr on failure
    */
-  uart::DeviceNode *get_uart_dev(int port_num, char *dev_name);
+  uart::DeviceNode *get_uart_dev(uint8_t port_num, char *dev_name,
+      uint8_t buf_t);
 
   /**
    * Check whether a uart dev exists at the desired port
    * @param port_num, tty port 1-6 to check
    * @return true if uart dev exists, else false
    */
-  bool check_uart_dev(int port_num);
+  bool check_uart_dev(uint8_t port_num);
 
   /**
    * Stop a uart device
    * @param port_num, port to stop
    * @return true if stop is successful, else false
    */
-  void stop_uart_dev(int port_num);
+  void stop_uart_dev(uint8_t port_num);
 
 private:
   // Data members

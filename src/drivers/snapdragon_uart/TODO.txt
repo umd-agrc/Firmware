@@ -1,1 +1,12 @@
-uORB messaging in device nodes
+Thread sending from and receiving data to buffers
+
+Use ELKA MAVLink message to communicate with ELKA module on Linux-side
+
+Use ELKA message structure to communicate with ELKA flight controller
+
+Manager loop so that no devices are required as startup args
+and so manager can add and remove devices as determined by the correct
+uORB message
+
+Restructure to have serial buffers.
+These will contain _expecting_ack, _prev_cmd_result

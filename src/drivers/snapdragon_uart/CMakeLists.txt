@@ -6,7 +6,7 @@ px4_add_module(
 		snapdragon_uart.cpp
 		snapdragon_uart_manager.cpp
 		snapdragon_uart_devices.cpp
-		basic_uart.c
+		basic_uart.cpp
 	DEPENDS
 		platforms__common
 	)

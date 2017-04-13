@@ -16,6 +16,7 @@
 .project
 .settings
 .swp
+*.sw*
 .~lock.*
 Archives/*
 Build/*
