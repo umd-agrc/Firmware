@@ -3,6 +3,8 @@
 
 #include <drivers/drv_hrt.h>
 #include <map>
+#include <elka/common/elka.h>
+#include <elka/common/elka_comm.h>
 #include <uORB/topics/elka_msg.h>
 #include <uORB/topics/elka_msg_ack.h>
 
@@ -90,50 +92,24 @@ public:
 
 private:
 
-  //FIXME add _snd_id and _rcv_id to a struct so that DeviceNode
-  // can communicate with both PX4 ELKA and Elka FCU
-  //      The struct should contain a _tx_buf and a _rx_buf
-  struct SerialBuffer {
-    void *_buffer;
-    uint16_t _msg_num;
-    uint8_t _type;
-    SerialBuffer(uint8_t buf_type);
-    ~SerialBuffer();
-  };
-
   // Encapsulates necessary aspects of communication to either PX4 ELKA or
   // hardware ELKA
-  struct CommPort {
-    struct SerialBuffer *_tx_buf;
-    struct SerialBuffer *_rx_buf;
-    // map of <msg_num,num_retries> key-value pairs
-    // for msgs waiting to receive ack
-    std::map<uint16_t,uint8_t> _expecting_ack;
-    uint8_t _proc_side;
-    uint8_t _port_num;
-    uint8_t _rcv_id;
-    uint8_t _snd_id;
-    CommPort(uint8_t port_num, uint8_t buf_type, uint8_t proc_side);
-    ~CommPort();
+  struct MultiPort : elka::CommPort {
+    MultiPort(uint8_t port_num, uint8_t buf_type, uint8_t proc_side);
+    ~MultiPort();
+    bool start_port() override;
+    bool stop_port() override;
+    bool pause_port() override;
+    bool resume_port() override;
   };
 
   // Data members
   uint8_t _state; // state of Snapdragon UART
   int _serial_fd;
   char _dev_name[MAX_NAME_LEN];
-  struct CommPort *_elka_comm;
-  struct CommPort *_px4_comm;
-
-  //TODO tx/rx ringbufs here
-  // ringbuf_t _tx_buf;
-  // ringbuf_t _rx_buf;
-
-  // TODO get rid of these. these are for debugging
-  // TX buffer sends to physical ELKA via UART
-  // RX buffer sends to posix-side ELKA PX4 module
-  //uint8_t _tx_buffer[MAX_MSG_LEN];
-  //uint8_t _rx_buffer[MAX_MSG_LEN];
-  
+  struct MultiPort *_elka_comm;
+  struct MultiPort *_px4_comm;
+ 
   // Helper functions for parsing returned elka message based on current state
   // @return msg type:
   //         parse_motor_cmd() always returns MSG_NULL

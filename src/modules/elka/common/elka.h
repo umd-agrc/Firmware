@@ -1,6 +1,10 @@
 #ifndef ELKA_H
 #define ELKA_H
 
+#include <uORB/uORB.h>
+#include <uORB/topics/elka_msg.h>
+#include <uORB/topics/elka_msg_ack.h>
+
 #include <drivers/drv_hrt.h>
 
 #define MAX_ELKA_DEVS 2

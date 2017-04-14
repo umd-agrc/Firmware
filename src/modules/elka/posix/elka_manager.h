@@ -1,7 +1,9 @@
 #ifndef ELKA_MANAGER_H
 #define ELKA_MANAGER_H
 
-#include "elka.h"
+#include <elka/common/elka.h>
+
+//#include "elka.h"
 #include "elka_devices.h"
 
 namespace elka {

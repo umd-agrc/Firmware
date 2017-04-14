@@ -8,8 +8,8 @@
 
 //-----------------Public Methods----------------------
 uart::DeviceNode::DeviceNode(uint8_t port_num, char *dev_name, uint8_t buf_t) {
-  _elka_comm = new CommPort(port_num, buf_t, ELKA_SIDE);
-  _px4_comm = new CommPort(port_num, buf_t, POSIX_SIDE);
+  _elka_comm = new MultiPort(port_num, buf_t, ELKA_SIDE);
+  _px4_comm = new MultiPort(port_num, buf_t, POSIX_SIDE);
   strcpy(_dev_name, dev_name);
 
   if (!(init() == PX4_OK)) {
@@ -32,6 +32,8 @@ uart::DeviceNode::~DeviceNode() {
 // Open UART port
 // @return PX4_OK on success, else PX4_ERROR
 int uart::DeviceNode::init() {
+  _elka_comm->start_port();
+  _px4_comm->start_port();
   if (open() == PX4_OK) {
     PX4_INFO("Initialized Snapdragon UART device to communicate on port %s",
         _dev_name);
@@ -44,6 +46,8 @@ int uart::DeviceNode::init() {
 // Close port access
 // @return PX4_OK on success, else PX4_ERROR
 int uart::DeviceNode::deinit() {
+  _elka_comm->stop_port();
+  _px4_comm->stop_port();
   if (close() == PX4_OK)
     return PX4_OK;
   else return PX4_ERROR;
@@ -512,52 +516,41 @@ void uart::DeviceNode::update_time() {
   _now = hrt_absolute_time();
 }
 
-//-----------------SerialBuffer Methods---------------------
+//-----------------MultiPort Methods---------------------
 
-//TODO add in array cast
-uart::DeviceNode::SerialBuffer::SerialBuffer(uint8_t buf_type) {
-  _type = buf_type;
-
-  _msg_num = 0;
-
-  if (buf_type == CHAR_ARRAY) {
-    _buffer = malloc(MAX_MSG_LEN);
-  } else if (buf_type == UINT8_ARRAY) {
-    _buffer = malloc(MAX_MSG_LEN);
-  } else {
-    PX4_ERR("Unsupported buffer type for Snapdragon UART port");
-    errno = EINVAL;
-  }
-}
-
-uart::DeviceNode::SerialBuffer::~SerialBuffer() {
-  if (_type == CHAR_ARRAY) {
-    free(_buffer);
-  } else if (_type == UINT8_ARRAY) {
-    free(_buffer);
-  } else {
-    PX4_ERR("Unsupported buffer type for Snapdragon UART port");
-    errno = EINVAL;
-  }
-}
-
-//-----------------CommPort Methods---------------------
-
-uart::DeviceNode::CommPort::CommPort(uint8_t port_num,
-    uint8_t buf_type, uint8_t proc_side) {
-  _port_num = port_num;
-  _proc_side = proc_side;
-  _tx_buf = new SerialBuffer(buf_type);
-  _rx_buf = new SerialBuffer(buf_type);
+uart::DeviceNode::MultiPort::MultiPort(uint8_t port_num,
+    uint8_t buf_type, uint8_t proc_side)
+  : elka::CommPort(port_num, PORT_UART, buf_type) {
 
   // Set sender and receiver id for this port (1-1 relationship)
   get_snd_rcv_id(&_snd_id, &_rcv_id,
       port_num, PORT_UART,
       QURT_SIDE, proc_side);
-
 }
 
-uart::DeviceNode::CommPort::~CommPort() {
+uart::DeviceNode::MultiPort::~MultiPort() {
   delete _tx_buf;
   delete _rx_buf;
 }
+
+bool uart::DeviceNode::MultiPort::start_port() {
+  _state = STATE_START;
+  _state = STATE_RESUME;
+  return true;
+}
+
+bool uart::DeviceNode::MultiPort::stop_port() {
+  _state = STATE_STOP;
+  return true;
+}
+
+bool uart::DeviceNode::MultiPort::pause_port() {
+  _state = STATE_PAUSE;
+  return true;
+}
+
+bool uart::DeviceNode::MultiPort::resume_port() {
+  _state = STATE_RESUME;
+  return true;
+}
+

@@ -1,12 +1,9 @@
 px4_add_module(
-	MODULE modules__elka__posix
-	MAIN elka
-	STACK_MAIN 1300
+	MODULE modules__elka__common
 	COMPILE_FLAGS
 	SRCS
-		elka_posix.cpp
-		elka_manager.cpp
-		elka_devices.cpp
+		elka.cpp
+    elka_comm.cpp
 	DEPENDS
 		platforms__common
 	)

@@ -4,11 +4,13 @@
 #include <drivers/drv_hrt.h>
 #include <map>
 #include <stdlib.h>
+#include <elka/common/elka.h>
+#include <elka/common/elka_comm.h>
 #include <uORB/topics/elka_msg.h>
 #include <uORB/topics/elka_msg_ack.h>
 #include <utility>
 
-#include "elka.h"
+//#include "elka.h"
 
 namespace elka {
 class DeviceNode;
@@ -84,34 +86,14 @@ public:
 
 private:
   // Data members
-  
-  struct SerialBuffer {
-    void *_buffer;
-
-    uint16_t _msg_num;
-    // Ack msg nums are for expectant ack msgs
-    uint8_t _type;
-
-    SerialBuffer(uint8_t buf_type);
-    ~SerialBuffer();
-  };
-
-  struct SerialPort {
-    struct SerialBuffer *_tx_buf;
-    struct SerialBuffer *_rx_buf;
-    // map of <msg_num,<num_retries,data>> key-value pairs
-    // for msgs waiting to receive ack
-    std::map<uint16_t, uint8_t> _expecting_ack;
-    uint8_t _state;
-    uint8_t _snd_id;
-    uint8_t _rcv_id;
+  struct SerialPort : CommPort {
     SerialPort(uint8_t port_n, uint8_t port_t,
         uint8_t buf_t);
     ~SerialPort();
-    bool start_port();
-    bool stop_port();
-    bool pause_port();
-    bool resume_port();
+    bool start_port() override;
+    bool stop_port() override;
+    bool pause_port() override;
+    bool resume_port() override;
   };
   
   // If _ports[i] exists then it is healthy

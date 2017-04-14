@@ -58,6 +58,7 @@ set(config_module_list
 	modules/simulator
 	modules/commander
 	modules/navigator
+  modules/elka/common
   modules/elka/posix # my elka module
 
 	lib/controllib

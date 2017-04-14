@@ -345,9 +345,7 @@ bool elka::DeviceNode::remove_msg(uint8_t port_num,
   }   
 
   if (tx && (elka_msg.msg_id & ID_EXPECTING_ACK)) {
-    //FIXME copy data
-    _ports[port_num]->_expecting_ack[elka_msg.msg_num] = 
-      std::pair(0,elka_msg.data);
+    _ports[port_num]->_expecting_ack[elka_msg.msg_num] = 0;
   }
 
   return true;
@@ -433,16 +431,13 @@ int elka::DeviceNode::deinit() {
 
 //TODO add in ringbuf support
 elka::DeviceNode::SerialPort::SerialPort(uint8_t port_n, uint8_t port_t,
-    uint8_t buf_t) {
-  _tx_buf = new SerialBuffer(buf_t);
-  _rx_buf = new SerialBuffer(buf_t);
-
-  _state = STATE_STOP;
-
+    uint8_t buf_t) : elka::CommPort(port_n, port_t, buf_t) {
+    
   // Set sender and receiver id for this port (1-1 relationship)
   get_snd_rcv_id(&_snd_id, &_rcv_id,
       port_n, port_t,
       POSIX_SIDE, QURT_SIDE);
+
 }
 
 elka::DeviceNode::SerialPort::~SerialPort() {
@@ -469,34 +464,5 @@ bool elka::DeviceNode::SerialPort::pause_port() {
 bool elka::DeviceNode::SerialPort::resume_port() {
   _state = STATE_RESUME;
   return true;
-}
-
-//-----------------SerialBuffer Methods---------------------
-
-//TODO add in array cast
-elka::DeviceNode::SerialBuffer::SerialBuffer(uint8_t buf_type) {
-  _type = buf_type;
-
-  _msg_num=0;
-
-  if (buf_type == CHAR_ARRAY) {
-    _buffer = malloc(MAX_MSG_LEN);
-  } else if (buf_type == UINT8_ARRAY) {
-    _buffer = malloc(MAX_MSG_LEN);
-  } else {
-    PX4_ERR("Unsupported buffer type for ELKA serial port");
-    errno = EINVAL;
-  }
-}
-
-elka::DeviceNode::SerialBuffer::~SerialBuffer() {
-  if (_type == CHAR_ARRAY) {
-    free(_buffer);
-  } else if (_type == UINT8_ARRAY) {
-    free(_buffer);
-  } else {
-    PX4_ERR("Unsupported buffer type for ELKA serial port");
-    errno = EINVAL;
-  }
 }
 

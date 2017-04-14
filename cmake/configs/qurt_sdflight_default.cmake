@@ -65,6 +65,7 @@ set(config_module_list
 	modules/land_detector
   #FIXME convert this to common at some point
   modules/elka/posix
+  modules/elka/common
 
 	#
 	# PX4 drivers
