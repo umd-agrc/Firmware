@@ -7,6 +7,7 @@ px4_add_module(
 		elka_posix.cpp
 		elka_manager.cpp
 		elka_devices.cpp
+		inet_comm.cpp
 	DEPENDS
 		platforms__common
 	)

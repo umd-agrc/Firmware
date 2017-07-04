@@ -40,8 +40,8 @@ public:
    * @return DeviceNode with corresponding parameters on success,
    *         nullptr on failure
    */
-  uart::DeviceNode *get_uart_dev(uint8_t port_num, char *dev_name,
-      uint8_t buf_t);
+  uart::UARTPort *get_uart_dev(uint8_t port_num, uint8_t buf_t,
+      uint8_t size, char *dev_name);
 
   /**
    * Check whether a uart dev exists at the desired port
@@ -61,7 +61,7 @@ private:
   // Data members
   static Manager *_instance;
   
-  DeviceNode *_uart_devs[MAX_UART_PORTS]; // Allow at most MAX_UART_PORTS devices
+  UARTPort *_uart_devs[MAX_UART_PORTS]; // Allow at most MAX_UART_PORTS devices
 
   // Class methods
   Manager();

@@ -3,25 +3,36 @@
 
 #include <drivers/drv_hrt.h>
 #include <map>
+#include <px4_posix.h>
 #include <elka/common/elka.h>
 #include <elka/common/elka_comm.h>
 #include <uORB/topics/elka_msg.h>
 #include <uORB/topics/elka_msg_ack.h>
+#include <uORB/topics/input_rc.h>
 
 #include "snapdragon_uart.h"
 #include "basic_uart.h"
 
 namespace uart {
-class DeviceNode;
+class UARTPort;
 }
 
-class uart::DeviceNode {
+class uart::UARTPort : public elka::CommPort {
 public:
   // This must be updated frequently thru callback or otherwise!
   hrt_abstime _now; 
 
-  DeviceNode(uint8_t port_num, char *dev_name, uint8_t buf_t);
-  ~DeviceNode();
+  input_rc_s _input_rc;
+  elka_msg_ack_s _elka_ack_snd, _elka_ack_rcv;
+  elka_msg_s _elka_snd, _elka_rcv;
+
+  // Advertise elka msg and elka msg ack
+  orb_advert_t _elka_ack_pub;
+  orb_advert_t _elka_msg_pub;
+
+  UARTPort(uint8_t port_num, uint8_t buf_t, uint8_t size,
+      char *dev_name);
+  ~UARTPort();
 
   // Open port for UART
   int init();
@@ -38,17 +49,34 @@ public:
   int remove_elka(elka_msg_s &elka_ret);
 
   // Write to ELKA side
-  int write(elka_msg_s &elka_snd);
+  int write(elka_msg_s &elka_msg);
 
   // Read and write to ELKA side
-  int read_write(elka_msg_s &elka_ret, elka_msg_s &elka_snd);
+ // int read_write(elka_msg_s &elka_ret, elka_msg_s &elka_snd);
+  
+  // End serial methods ------------------------------
 
-  // Check if port is running correctly
-  // @return port_type if exists, else 0
-  uint8_t check_port(uint8_t port_num, bool px4);
+  // Add message to buffer
+  // Adds message to buffer for all applicable
+  // devices unless target_dev is specified
+  // @return msg_type
+  uint8_t add_msg(uint8_t msg_type,
+                  uint8_t len,
+                  uint8_t num_retries,
+                  uint16_t msg_num,
+                  uint8_t *data,
+                  dev_id_t *target_dev);
 
-  // Set elka state
-  void set_state_msg(elka_msg_s &elka_snd, uint8_t state, bool px4);
+  // Set elka state in elka_msg. May push this to a buffer after
+  uint8_t set_dev_state_msg(
+      elka_msg_s &elka_snd,
+      dev_id_t rcv_id,
+      uint8_t state,
+      bool elka_ctl);
+
+  // Send message at front of _tx_buf in appropriate manner
+  uint8_t send_msg(elka_msg_s &elka_msg);
+  uint8_t send_msg(elka_msg_ack_s &elka_msg);
 
   // Set parse elka msg and set ack if applicable 
   // If control message, perform appropriate actions on serial port.
@@ -60,83 +88,60 @@ public:
   // @return msg_type if msg is meant for u
   //         MSG_NULL if msg not meant for u
   //         MSG_FAILED If msg meant for u and incorrect
-  uint8_t parse_elka_msg(elka_msg_s &elka_ret, elka_msg_ack_s &elka_ack,
-      bool px4);
+  uint8_t parse_elka_msg(
+      elka_msg_s &elka_ret,
+      elka_msg_ack_s &elka_ack);
 
-  // Set message on buffer
-  // Can be used to set messages returned or to send
-  // @param elka_msg = message to push to buffer
-  // @param bool tx = true if push to tx buffer
-  //                  false if push to rx buffer
-  // @return msg_type if msg is pushed successfully 
-  //         MSG_NULL if msg not meant for u in the case of tx=false
-  //         MSG_FAILED if msg meant for u and incorrect
-  //                    if msg is not pushed correctly
-  uint8_t push_msg(elka_msg_s &elka_msg, bool px4, bool tx);
-
-  // Retrieve message from buffer and set to elka_msg
-  // @param elka_msg = message to set from buffer
-  // @param bool tx = true if remove from tx buffer
-  //                  false if remove from rx buffer
-  bool remove_msg(elka_msg_s &elka_msg, bool px4, bool tx);
-
-  //FIXME add in cababilities for bad messages to add up
-  //      before being handled
-  // Check ack for sent message
+  // Check ack with most recent message sent
   // Check ack with respect to port number from elka_ack.msg_id
-  uint8_t check_ack(struct elka_msg_ack_s &elka_ack,
-      bool px4);
+  // @param bool px4 = true if check with px4 buffer
+  //                   false if check with elka buffer
+  uint8_t check_ack(struct elka_msg_ack_s &elka_ack);
 
   // Update _now variable with current time
   void update_time();
 
 private:
 
-  // Encapsulates necessary aspects of communication to either PX4 ELKA or
-  // hardware ELKA
-  struct MultiPort : elka::CommPort {
-    MultiPort(uint8_t port_num, uint8_t buf_type, uint8_t proc_side);
-    ~MultiPort();
-    bool start_port() override;
-    bool stop_port() override;
-    bool pause_port() override;
-    bool resume_port() override;
-  };
+  bool start_port() override;
+  bool stop_port() override;
+  bool pause_port() override;
+  bool resume_port() override;
 
   // Data members
   uint8_t _state; // state of Snapdragon UART
   int _serial_fd;
   char _dev_name[MAX_NAME_LEN];
-  struct MultiPort *_elka_comm;
-  struct MultiPort *_px4_comm;
  
+  /*
+  // Map from port id to port num
+  std::map<dev_id_t, uint8_t> _port_num_map;
+  */
+
   // Helper functions for parsing returned elka message based on current state
   // @return msg type:
-  //         parse_motor_cmd() always returns MSG_NULL
-  //         parses_port_ctl and parse_elka_ctl return:
-  //         MSG_FAILED if msg parsing failed
-  //         MSG_NULL if msg not for u
+  //         parse_motor_cmd always returns MSG_NULL on success
+  //                                          MSG_FAILED on failure
+  //         parse_port_ctl and parse_elka_ctl return:
+  //           MSG_FAILED if msg parsing failed
+  //          MSG_NULL if msg not for u
   //         Can return all other types of msgs except for MSG_ACK
   // Resumes elka if paused or started. Starts elka if stopped
   uint8_t parse_motor_cmd(elka_msg_s &elka_ret,
                           elka_msg_ack_s &elka_ack,
-                          struct elka_msg_id_s &msg_id,
-                          struct snd_rcv_id_s &ret_id,
-                          bool px4);
+                          struct elka_msg_id_s &msg_id);
+
   // Control message to serial port drivers.
   // Can start, stop, pause, resume ELKA port behavior.
   // Still allow Spektrum to run.
   uint8_t parse_port_ctl(elka_msg_s &elka_ret,
                          elka_msg_ack_s &elka_ack,
-                         struct elka_msg_id_s &msg_id,
-                         struct snd_rcv_id_s &ret_id,
-                         bool px4);
+                         struct elka_msg_id_s &msg_id);
+
   // Pass control message between PX4 ELKA and ELKA hardware
   uint8_t parse_elka_ctl(elka_msg_s &elka_ret,
                          elka_msg_ack_s &elka_ack,
-                         struct elka_msg_id_s &msg_id,
-                         struct snd_rcv_id_s &ret_id,
-                         bool px4);
+                         struct elka_msg_id_s &msg_id);
 
   int deinit();
 };

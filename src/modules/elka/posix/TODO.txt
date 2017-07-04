@@ -1,4 +1,5 @@
-Move elka.h and implementation to a common (not processor specific) directory
+Fix ack checking. Can't just pop. What if new message is pushed
+with higher priority? In that case, you are popping new message.
 
 Thread sending from and receiving to buffers
 

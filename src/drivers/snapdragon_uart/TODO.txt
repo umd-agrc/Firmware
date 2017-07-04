@@ -1,3 +1,6 @@
+Fix ack checking. Can't just pop. What if new message is pushed
+with higher priority? In that case, you are popping new message.
+
 Thread sending from and receiving data to buffers
 
 Use ELKA MAVLink message to communicate with ELKA module on Linux-side
@@ -10,3 +13,4 @@ uORB message
 
 Restructure to have serial buffers.
 These will contain _expecting_ack, _prev_cmd_result
+

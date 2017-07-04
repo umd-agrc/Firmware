@@ -10,12 +10,11 @@
 #include <string>
 #include <cstring>
 
-#include <elka/common/elka.h>
 #include <uORB/uORB.h>
 #include <uORB/topics/elka_msg.h>
 #include <uORB/topics/elka_msg_ack.h>
 
-//#include "elka.h"
+#include "elka_posix.h"
 #include "elka_manager.h"
 
 extern "C" { __EXPORT int elka_main(int argc, char *argv[]); }
@@ -27,7 +26,6 @@ static int daemon_task[MAX_ELKA_DEVS];
 static volatile bool thread_should_exit[MAX_ELKA_DEVS];
 static volatile bool thread_running[MAX_ELKA_DEVS];
 static int num_elka_devs = 0;
-const hrt_abstime msg_threshold = 500000;
 
 void usage();
 int elka_dev_loop(int argc, char **argv);
@@ -162,8 +160,6 @@ int elka_main(int argc, char *argv[]) {
           }
         }
         return !(j < max_wait_steps);
-      } else if (!mgr->check_elka_port(dev_num,port_num)) {
-        //TODO add port to existing device
       }
 
       i++;
@@ -278,15 +274,17 @@ int elka_dev_loop(int argc, char **argv) {
   uint8_t dev_num = (uint8_t)*argv[0],
           port_num = (uint8_t)*argv[1],
           port_type = (uint8_t)*argv[2],
-          buf_type = UINT8_ARRAY; // FIXME why is this not creating UINT8 array?
+          buf_type = PRIORITY_QUEUE; 
 
   sprintf(dev_name,"elka_%d",dev_num);
 
   // Increment number of elka devs on start
   num_elka_devs++;
   PX4_INFO("Adding elka device %s", dev_name);
-  elka::DeviceNode *elka = mgr->get_elka_dev(
-      dev_num, port_num, port_type, buf_type, dev_name);
+
+  uint8_t queue_sz = 42;
+  elka::PX4Port *elka = mgr->get_elka_dev(
+      dev_num, port_num, port_type, buf_type, queue_sz, dev_name);
 
   // Define poll_return for defined file descriptors
   int poll_ret;
@@ -299,6 +297,8 @@ int elka_dev_loop(int argc, char **argv) {
   // Set update rate to 100Hz
   orb_set_interval(elka_ret_sub_fd, 10);
 
+  /*
+  //TODO add these as class variables
   // elka_ack_snd is ack to be sent after parsing next cmd from rx_buf
   // elka_ack_rcv is ack received after sending msg from tx_buf
   struct elka_msg_ack_s elka_ack_rcv, elka_ack_snd;
@@ -322,6 +322,7 @@ int elka_dev_loop(int argc, char **argv) {
   //    ORB_ID(elka_msg), NULL);
   //orb_advert_t elka_ack_pub = orb_advertise(
   //    ORB_ID(elka_msg_ack), NULL);
+  */
 
   // Define topic subscribers to wait for with polling
   px4_pollfd_struct_t fds[] = {
@@ -340,27 +341,115 @@ int elka_dev_loop(int argc, char **argv) {
   // Determines result of parsing previous message.
   // If MSG_NULL, then don't send ack.
   // Else send ack.
-  uint8_t parse_res; 
+  // nxt_msg_type[0] is tx, nxt_msg_type[1] is rx
+  // nxt_msg_len[0] is tx, nxt_msg_len[1] is rx
+  uint8_t parse_res, nxt_msg_type[2], 
+          nxt_msg_len[2], dbg = 0; 
+  // snd_id is sender id for received elka_msgs and elka_ack_msgs
+  dev_id_t snd_id;
+
+  // DEBUGGING: Perform routing -------------
+  // FIXME
+  elka->set_dev_props_msg(
+      elka->_id,
+      (dev_id_t)0,
+      true,
+      elka->_elka_snd);
+
+  get_elka_msg_id_attr(NULL,NULL,NULL,
+      &nxt_msg_type[0],&nxt_msg_len[0],
+      elka->_elka_snd.msg_id);
+
+  elka->add_msg(
+      nxt_msg_type[0], 
+      nxt_msg_len[0],
+      elka->_elka_snd.num_retries,
+      elka->_elka_snd.msg_num,
+      elka->_elka_snd.data,
+      NULL);
+  // END DEBUGGING: Perform routing ----------
 
   // Poll each loop cycle. Parse thru each elka_msg to send
   // to correct port buffer.
+  // TODO figure out how to receive multiple messages at once thru uORB
   while (!thread_should_exit[dev_num]) {
     elka->update_time();
-    // Publish elka msgs on ports
-    for (uint8_t i=0; i < MAX_SERIAL_PORTS; i++) {
-      // Set and publish elka_snd if message exists
-      // First thing done is write to msg queue
-      // Next thing done is set message from tx_buf to send thru orb_publish
-      // Remove next message from rx_buf to parse
-      elka->remove_msg(i, elka_ret_cmd, false);
 
-      if (elka->get_port_state(i) == STATE_RESUME &&
-          elka->push_msg(i, MSG_PORT_CTL, debug_length, debug_data, true) &&
-          elka->remove_msg(i, elka_snd, true)) {
-        PX4_INFO("state: %d", elka->get_port_state(i));
-        //PX4_INFO("sending msg on port %d w msg_id %d", i, elka_snd.msg_id);
-        orb_publish(ORB_ID(elka_msg), elka_msg_pub, &elka_snd);
+    // Set and publish elka_snd if message exists
+    // First thing done is write to msg queue
+    // Next thing done is set message from tx_buf
+    // to send thru orb_publish
 
+    // Remove next message from _rx_buf to parse
+    // Skip parsing if there is no message in buffer
+    // Push ack if necessary
+    if ((nxt_msg_type[1] = elka->remove_msg(elka->_elka_ret_cmd, 
+                                           elka->_elka_ack_rcv,
+                                           false)) == MSG_ACK) {
+        // TODO push to _rc_buf and check in a parse_elka_msg()
+        // TODO Check message timestamp
+        if (elka->check_ack(elka->_elka_ack_rcv)
+            == elka_msg_ack_s::ACK_FAILED) {
+          PX4_ERR("Failed acknowledgement for msg id: " PRMIT "",
+              elka->_elka_ack_rcv.msg_id);
+        }
+    } else if (nxt_msg_type[1] != MSG_NULL) {
+      // Parse message
+      // Send ack if the message requires one 
+      if ((parse_res = elka->parse_elka_msg(
+                          elka->_elka_ret_cmd))
+          == MSG_FAILED) {
+        PX4_ERR("Failed message for msg id: " PRMIT "",
+            elka->_elka_ret_cmd.msg_id);
+      }
+      if (parse_res & TYPE_EXPECTING_ACK) {
+        elka->push_msg(elka->_elka_ack_snd, true);
+      }
+    }
+
+    //FIXME debugging
+    debug_data[6] = dbg++;
+
+    if (elka->get_state() == STATE_RESUME) {
+      // For debugging, alternate between sending port msg
+      // and motor_cmd
+      // TODO routing
+      if (false) {
+        if ((dbg/2) % 2) {
+          elka->add_msg(MSG_PORT_CTL,
+                  debug_length,
+                  0,
+                  0,
+                  debug_data,
+                  NULL);
+        } else {
+          elka->add_msg(MSG_MOTOR_CMD,
+                  debug_length,
+                  0,
+                  0,
+                  debug_data,
+                  NULL);
+        }
+      }
+
+      if ( (nxt_msg_type[0] = elka->get_msg(
+                                elka->_elka_snd,
+                                elka->_elka_ack_snd,
+                                true))
+           == MSG_ACK ) {
+        elka->send_msg(elka->_elka_ack_snd);
+      } else if (nxt_msg_type[0] != MSG_NULL &&
+                 nxt_msg_type[0] != MSG_FAILED ) {
+
+        elka->send_msg(elka->_elka_snd);
+
+        if (!(elka->_elka_snd.msg_id & ID_EXPECTING_ACK)) {
+          // TODO This scheme of popping only works if messages are
+          // pushed here and not in a separate thread
+          elka->pop_msg(true);
+        } else {// Sleep for a short time to let ack process
+          usleep(20000);
+        }
       }
     }
 
@@ -370,7 +459,7 @@ int elka_dev_loop(int argc, char **argv) {
     // Handle the poll result
     if (poll_ret == 0) {
       // None of our providers is giving us data
-      PX4_ERR("Got no data");
+      PX4_WARN("Got no data");
     } else if (poll_ret < 0) {
       // Should be an emergency
       if (error_counter < 10 || error_counter % 50 == 0) {
@@ -383,39 +472,32 @@ int elka_dev_loop(int argc, char **argv) {
 
       if (fds[0].revents & POLLIN) {
         // Obtained data for the first file descriptor
-        orb_copy(ORB_ID(elka_msg_ack), elka_ack_sub_fd, &elka_ack_rcv);
-        // TODO Here will copy into DeviceNode ringbuf
-        // FIXME must parse thru msg to ensure that it is of the correct type
+        orb_copy(ORB_ID(elka_msg_ack), elka_ack_sub_fd,
+            &elka->_elka_ack_rcv);
+
+        // TODO push to _rx_buf and check in a parse_elka_msg()
         // TODO Check message timestamp
-        PX4_INFO("ELKA message ack:\n\tmsg_id: %d\n\tmsg_num: %d\n\tresult: %d",
-            elka_ack_rcv.msg_id,
-            elka_ack_rcv.msg_num,
-            elka_ack_rcv.result);
-
-        if (elka->check_ack(elka_ack_rcv) == elka_msg_ack_s::ACK_FAILED) {
-          PX4_ERR("Failed acknowledgement for msg id: %d",
-              elka_ack_rcv.msg_id);
+        if (elka->check_ack(elka->_elka_ack_rcv)
+            == elka_msg_ack_s::ACK_FAILED) {
+          PX4_ERR("Failed acknowledgement for msg id: " PRMIT "",
+              elka->_elka_ack_rcv.msg_id);
         }
-
       }
       
       if (fds[1].revents & POLLIN) {
-        //FIXME send to parsing function
         // Obtained data for the first file descriptor
-        orb_copy(ORB_ID(elka_msg), elka_ret_sub_fd, &elka_ret);
-        // push msg to rx_buf 
-        elka->push_msg(elka_ret, false);
-      }
-    }
+        orb_copy(ORB_ID(elka_msg),
+            elka_ret_sub_fd,
+            &elka->_elka_ret);
 
-    // remove and parse message from rx_buf
-    // send ack if the message requires one 
-    if ((parse_res = elka->parse_elka_msg(elka_ret_cmd,elka_ack_snd)) ==
-                  MSG_FAILED) {
-      PX4_ERR("Failed message for msg id: %d",
-          elka_ret_cmd.msg_id);
-    } else if (parse_res != MSG_NULL) {
-      orb_publish(ORB_ID(elka_msg_ack), elka_ack_pub, &elka_ack_snd);
+        // Push msg to rx_buf 
+        // Do not push if you are the sender to prevent cycles from
+        // forming
+        get_elka_msg_id_attr(&snd_id, NULL, NULL, NULL, NULL,
+            elka->_elka_ret.msg_id);
+        if (cmp_dev_id_t(snd_id, elka->_id))
+          elka->push_msg(elka->_elka_ret, false);
+      }
     }
 
     usleep(1000000);
@@ -428,6 +510,7 @@ int elka_dev_loop(int argc, char **argv) {
   // Decrement number of elka devs on end
   num_elka_devs--;
 
+  thread_running[dev_num] = false;
+
   return PX4_OK;
 }
-

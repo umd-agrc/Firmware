@@ -67,7 +67,7 @@ set(config_module_list
 	drivers/pwm_out_rc_in
 	drivers/qshell/qurt
 	drivers/snapdragon_pwm_out
-  drivers/snapdragon_uart
+  #drivers/snapdragon_uart
 
 	#
 	# FC_ADDON drivers

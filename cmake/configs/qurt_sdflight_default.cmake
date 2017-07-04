@@ -63,9 +63,8 @@ set(config_module_list
 	modules/uORB
 	modules/commander
 	modules/land_detector
-  #FIXME convert this to common at some point
-  modules/elka/posix
   modules/elka/common
+  modules/spektrum_serial_test
 
 	#
 	# PX4 drivers
@@ -93,8 +92,6 @@ set(config_module_list
 	lib/rc
 	lib/version
 	lib/DriverFramework/framework
-  #FIXME not building with Hexagon-clang
-  #lib/c-ringbuf
 
 	#
 	# QuRT port

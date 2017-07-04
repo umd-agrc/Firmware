@@ -50,7 +50,8 @@ set(config_module_list
 	modules/simulator
 	modules/commander
 	modules/navigator
-  modules/elka/posix
+  #modules/elka/common
+  #modules/elka/posix
 
 	lib/controllib
 	lib/mathlib

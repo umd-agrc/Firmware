@@ -18,10 +18,12 @@ bool uart::Manager::initialize() {
 }
 
 //-----------------------------------------------------
-uart::DeviceNode *uart::Manager::get_uart_dev(
-    uint8_t port_num, char *dev_name, uint8_t buf_t) {
+uart::UARTPort *uart::Manager::get_uart_dev(
+    uint8_t port_num, uint8_t buf_t, uint8_t size,
+    char *dev_name) {
   if (!_uart_devs[port_num]) {
-    _uart_devs[port_num] = new DeviceNode(port_num, dev_name, buf_t);
+    _uart_devs[port_num] = new UARTPort(port_num, buf_t,
+                                          size, dev_name);
 
     if (_uart_devs[port_num] ) {
       int ret = _uart_devs[port_num]->init();
@@ -37,6 +39,7 @@ uart::DeviceNode *uart::Manager::get_uart_dev(
       errno = ENOMEM;
     }
   }
+
 
   return _uart_devs[port_num];
 }
