@@ -41,6 +41,4 @@
 [submodule "src/drivers/gps/devices"]
 	path = src/drivers/gps/devices
 	url = https://github.com/PX4/GpsDrivers.git
-[submodule "src/lib/c-ringbuf"]
-  path = src/lib/c-ringbuf
-  url = https://github.com/han-so1omon/c-ringbuf.git
+

@@ -67,7 +67,6 @@ set(config_module_list
 	drivers/pwm_out_rc_in
 	drivers/qshell/qurt
 	drivers/snapdragon_pwm_out
-  #drivers/snapdragon_uart
 
 	#
 	# FC_ADDON drivers
@@ -90,8 +89,6 @@ set(config_module_list
 	lib/tailsitter_recovery
 	lib/version
 	lib/DriverFramework/framework
-  #FIXME not building with Hexagon-clang
-  #lib/c-ringbuf
 
 	#
 	# QuRT port

@@ -1,5 +1,5 @@
 px4_add_module(
-	MODULE drivers__snapdragon_uart
+	MODULE modules__elka__qurt
 	MAIN snapdragon_uart
 	COMPILE_FLAGS
 	SRCS
