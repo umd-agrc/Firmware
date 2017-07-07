@@ -328,10 +328,11 @@ void elka::SerialBuffer::erase_msg(msg_id_t msg_id, uint16_t msg_num,
     if (it->_rmv_msg_num == msg_num) {
       get_elka_msg_id_attr(&buf_snd_id,
           NULL, NULL, NULL, NULL, it->_msg_id);
-      if (!cmp_dev_id_t(buf_snd_id, msg_snd_id))
-      PX4_INFO("erasing msg here");
-      _buffer.erase(--(it.base()));
-      break;
+      if (!cmp_dev_id_t(buf_snd_id, msg_snd_id)) {
+        PX4_INFO("erasing msg here");
+        _buffer.erase(--(it.base()));
+        break;
+      }
     }
   }
 

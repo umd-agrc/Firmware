@@ -1,8 +1,13 @@
+#if defined(__PX4_QURT) || defined(__PX4_POSIX)
+
 #include <poll.h>
 #include <px4_config.h>
 #include <px4_defines.h>
 #include <px4_log.h>
 #include <px4_time.h>
+
+#endif
+
 #include <stdlib.h>
 #include <string>
 #include <cstring>

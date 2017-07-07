@@ -5,9 +5,14 @@
 #include <uORB/uORB.h>
 #include <uORB/topics/elka_msg.h>
 #include <uORB/topics/elka_msg_ack.h>
+
+#if defined(__PX4_QURT) || defined(__PX4_POSIX)
+
 //#include <drivers/bootloaders/include/random.h>
 #include <drivers/drv_hrt.h>
 #include <platforms/px4_time.h>
+
+#endif
 
 //FIXME copy random stuff from <drivers/bootloaders/include/random.h>
 //      because of linking error
