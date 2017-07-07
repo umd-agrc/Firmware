@@ -334,7 +334,7 @@ void elka::SerialBuffer::erase_msg(msg_id_t msg_id, uint16_t msg_num,
         break;
       }
     }
-  }
+  
 
   /*
 #elif defined(__PX4_POSIX)
