@@ -26,7 +26,7 @@ uart::UARTPort *uart::Manager::get_uart_dev(
                                           size, dev_name);
 
     if (_uart_devs[port_num] ) {
-      int ret = _uart_devs[port_num]->init();
+      int ret = _uart_devs[port_num]->initialize(0,0,0,0);
 
       if (ret != PX4_OK) {
         PX4_ERR("Initialization of DeviceNode failed (%i)", ret);

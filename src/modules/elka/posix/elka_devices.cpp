@@ -6,38 +6,17 @@
 
 #include "elka_devices.h"
 
+elka::PX4Port *elka::PX4Port::_instance = nullptr;
+
 //-----------------Public Methods----------------------
 elka::PX4Port::PX4Port(uint8_t port_num, uint8_t port_type,
     uint8_t buf_type, uint8_t size, char *dev_name) 
     : elka::CommPort(port_num, port_type, buf_type, size) {
-  if (!(init() == PX4_OK)) {
-    PX4_ERR("Unable to initialize elka device %s",dev_name);
-    errno = ECANCELED;
-  } else {
-    strcpy(_dev_name, dev_name);
 
-    get_snd_params(&_snd_params, port_num, port_type,
-      DEV_PROP_POSIX_SIDE);
-  }
-}
-
-elka::PX4Port::~PX4Port() {
-  if (!(deinit() == PX4_OK)) {
-    PX4_ERR("Unable to deinitialize elka device %s",
-    _dev_name);
-    errno = ECANCELED;
-  };
-
-  delete _tx_buf;
-  delete _rx_buf;
-}
-
-int elka::PX4Port::init() {
   memset(&_elka_ack_snd, 0, sizeof(_elka_ack_snd));
   memset(&_elka_ack_rcv, 0, sizeof(_elka_ack_rcv));
   memset(&_elka_snd, 0, sizeof(_elka_snd));
-  memset(&_elka_ret, 0, sizeof(_elka_ret));
-  memset(&_elka_ret_cmd, 0, sizeof(_elka_ret_cmd));
+  memset(&_elka_rcv, 0, sizeof(_elka_rcv));
   
   // Advertise attitude topic
   _elka_msg_pub = orb_advertise(
@@ -58,9 +37,39 @@ int elka::PX4Port::init() {
   _routing_table[_id].add_prop(DEV_PROP_USE_CAMERA);
   _routing_table[_id].add_prop(DEV_PROP_HAS_CAMERA);
 
-  start_port();
+  strcpy(_dev_name, dev_name);
 
-  return PX4_OK;
+  get_snd_params(&_snd_params, port_num, port_type,
+    DEV_PROP_POSIX_SIDE);
+
+  start_port();
+}
+
+elka::PX4Port::~PX4Port() {
+  if (!(deinitialize() == PX4_OK)) {
+    PX4_ERR("Unable to deinitialize elka device %s",
+    _dev_name);
+    errno = ECANCELED;
+  };
+
+  delete _tx_buf;
+  delete _rx_buf;
+}
+
+int elka::PX4Port::initialize(
+      uint8_t port_num, uint8_t port_type, uint8_t buf_type,
+      uint8_t queue_sz, char *dev_name) {
+
+  if (_instance == nullptr) {
+    _instance = new PX4Port(port_num, port_type,
+        buf_type, queue_sz, dev_name);
+  }
+
+  return _instance != nullptr;
+}
+
+bool elka::PX4Port::print_statistics(bool reset) {
+  return false;
 }
 
 // msg_num and num_retries are useful parameters only
@@ -255,6 +264,35 @@ uint8_t elka::PX4Port::parse_elka_msg(elka_msg_s &elka_msg) {
   return parse_res;
 }
 
+uint8_t elka::PX4Port::parse_elka_msg(elka_msg_ack_s &elka_msg) {
+  dev_id_t snd_id, rcv_id;
+  bool in_route;
+
+  get_elka_msg_id_attr(&snd_id, &rcv_id,
+                       NULL, NULL, NULL,
+                       elka_msg.msg_id);
+
+  // Check that device can be reached.
+  // If message is not meant for you, then push it thru.
+  // If message is meant for you, then check message type
+  // to determine correct method of parsing message.
+  if (!(in_route = check_route(rcv_id))) {
+    return MSG_NULL;
+  } else if (in_route &&
+             cmp_dev_id_t(rcv_id, _id) &&
+             cmp_dev_id_t(snd_id, _id)) {
+    // Push message along if:
+    //    It can be reached 
+    //    It is not for you
+    //    It is not from you (avoid creating cycle in graph)
+    return push_msg(elka_msg, true);
+  } else if (check_ack(elka_msg)
+      == elka_msg_ack_s::ACK_FAILED) {
+    return MSG_FAILED;
+  } else 
+    return MSG_ACK;
+}
+
 uint8_t elka::PX4Port::parse_motor_cmd(elka_msg_s &elka_msg,
                         elka_msg_ack_s &elka_ack,
                         struct elka_msg_id_s &msg_id) {
@@ -380,7 +418,7 @@ uint8_t elka::PX4Port::check_ack(struct elka_msg_ack_s &elka_ack) {
               elka_msg_ack_s::ACK_NULL) {
     ElkaBufferMsg *ebm;
     if ((ebm = sb->get_buffer_msg(
-            elka_ack.msg_id, elka_ack.msg_num, false))) {
+            elka_ack.msg_id, elka_ack.msg_num))) {
       if ( (ret = check_elka_ack(elka_ack,
                   ebm->_msg_id,
                   ebm->_rmv_msg_num,
@@ -392,7 +430,7 @@ uint8_t elka::PX4Port::check_ack(struct elka_msg_ack_s &elka_ack) {
       } else if (ret != elka_msg_ack_s::ACK_NULL) {
         // Message received and processed fine, so erase it
         PX4_INFO("erasing message");
-        sb->erase_msg(elka_ack.msg_id, elka_ack.msg_num, false);
+        sb->erase_msg(elka_ack.msg_id, elka_ack.msg_num);
         sb->push_recent_acks(elka_ack.msg_num);
       }
     } else {
@@ -445,7 +483,7 @@ void elka::PX4Port::wait_for_child(Child *child) {
 	}
 }
 
-int elka::PX4Port::deinit() {
+int elka::PX4Port::deinitialize() {
   _routing_table.clear();
   stop_port();
   return PX4_OK;

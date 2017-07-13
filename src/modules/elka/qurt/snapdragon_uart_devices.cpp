@@ -6,35 +6,18 @@
 
 #include "snapdragon_uart_devices.h"
 
+uart::UARTPort *uart::UARTPort::_instance = nullptr;
+
 //-----------------Public Methods----------------------
 uart::UARTPort::UARTPort(uint8_t port_num, uint8_t buf_t,
     uint8_t size, char *dev_name)
   : elka::CommPort(port_num, PORT_UART, buf_t, size) {
 
+  strcpy(_dev_name, dev_name);
+
   get_snd_params(&_snd_params,
       port_num, PORT_UART, DEV_PROP_QURT_SIDE);
 
-  if (!(init() == PX4_OK)) {
-    PX4_ERR("Unable to initialize elka device %s",dev_name);
-    errno = ECANCELED;
-  } else {
-    strcpy(_dev_name, dev_name);
-  }
-}
-
-uart::UARTPort::~UARTPort() {
-  delete _tx_buf;
-  delete _rx_buf;
-
-  if (deinit() != PX4_OK) {
-    PX4_ERR("Unable to deinitialize elka device with %s",
-        _dev_name);
-  }
-}
-
-// Open UART port
-// @return PX4_OK on success, else PX4_ERROR
-int uart::UARTPort::init() {
   memset(&_input_rc, 0, sizeof(_input_rc));
   memset(&_elka_ack_snd, 0, sizeof(_elka_ack_snd));
   memset(&_elka_ack_rcv, 0, sizeof(_elka_ack_rcv));
@@ -57,17 +40,48 @@ int uart::UARTPort::init() {
 
   start_port();
   if (open() == PX4_OK) {
-    PX4_INFO("Initialized Snapdragon UART device to communicate on port %s with fd %d",
+
+    assign_read_callback();
+
+    PX4_INFO("Initialized elka device to communicate on port %s with fd %d",
         _dev_name, _serial_fd);
-    return PX4_OK;
   } else {
-    return PX4_ERROR;
+    PX4_INFO("Unable to initialize elka device",
+        _dev_name, _serial_fd);
+    errno = ECANCELED;
   }
+}
+
+uart::UARTPort::~UARTPort() {
+  delete _tx_buf;
+  delete _rx_buf;
+
+  if (deinitialize() != PX4_OK) {
+    PX4_ERR("Unable to deinitialize elka device with %s",
+        _dev_name);
+  }
+}
+
+// Open UART port
+// @return PX4_OK on success, else PX4_ERROR
+int uart::UARTPort::initialize(
+    uint8_t port_num, uint8_t buf_t,
+    uint8_t size, char *dev_name) {
+  if (_instance == nullptr) {
+    _instance = new UARTPort(
+        port_num, buf_t, size, dev_name);
+  }
+
+  return _instance != nullptr;
+}
+
+bool uart::UARTPort::print_statistics(bool reset) {
+  return false;
 }
 
 // Close port access
 // @return PX4_OK on success, else PX4_ERROR
-int uart::UARTPort::deinit() {
+int uart::UARTPort::deinitialize() {
   stop_port();
   if (close() == PX4_OK)
     return PX4_OK;
@@ -252,8 +266,8 @@ uint8_t uart::UARTPort::send_msg(elka_msg_ack_s &elka_msg) {
   return msg_type;
 }
 
-uint8_t uart::UARTPort::parse_elka_msg(elka_msg_s &elka_msg,
-    elka_msg_ack_s &elka_ack) {
+uint8_t uart::UARTPort::parse_elka_msg(elka_msg_s &elka_msg) {
+  elka_msg_ack_s elka_ack;
   struct elka_msg_id_s msg_id;
   uint8_t parse_res;
   bool in_route;
@@ -308,6 +322,35 @@ uint8_t uart::UARTPort::parse_elka_msg(elka_msg_s &elka_msg,
   }
 
   return parse_res;
+}
+
+uint8_t uart::UARTPort::parse_elka_msg(elka_msg_ack_s &elka_msg) {
+  dev_id_t snd_id, rcv_id;
+  bool in_route;
+
+  get_elka_msg_id_attr(&snd_id, &rcv_id,
+                       NULL, NULL, NULL,
+                       elka_msg.msg_id);
+
+  // Check that device can be reached.
+  // If message is not meant for you, then push it thru.
+  // If message is meant for you, then check message type
+  // to determine correct method of parsing message.
+  if (!(in_route = check_route(rcv_id))) {
+    return MSG_NULL;
+  } else if (in_route &&
+             cmp_dev_id_t(rcv_id, _id) &&
+             cmp_dev_id_t(snd_id, _id)) {
+    // Push message along if:
+    //    It can be reached 
+    //    It is not for you
+    //    It is not from you (avoid creating cycle in graph)
+    return push_msg(elka_msg, true);
+  } else if (check_ack(elka_msg)
+      == elka_msg_ack_s::ACK_FAILED) {
+    return MSG_FAILED;
+  } else 
+    return MSG_ACK;
 }
 
 // Helper functions for parsing returned elka message based on current state
@@ -398,7 +441,7 @@ uint8_t uart::UARTPort::check_ack(struct elka_msg_ack_s &elka_ack) {
               elka_msg_ack_s::ACK_NULL) {
     elka::ElkaBufferMsg *ebm;
     if ((ebm = sb->get_buffer_msg(
-            elka_ack.msg_id, elka_ack.msg_num, false))) {
+            elka_ack.msg_id, elka_ack.msg_num))) {
       if ( (ret = check_elka_ack(elka_ack,
                   ebm->_msg_id,
                   ebm->_rmv_msg_num,
@@ -410,7 +453,7 @@ uint8_t uart::UARTPort::check_ack(struct elka_msg_ack_s &elka_ack) {
       } else if (ret != elka_msg_ack_s::ACK_NULL) {
         // Message received and processed fine, so erase it
         PX4_INFO("erasing message");
-        sb->erase_msg(elka_ack.msg_id, elka_ack.msg_num, false);
+        sb->erase_msg(elka_ack.msg_id, elka_ack.msg_num);
         sb->push_recent_acks(elka_ack.msg_num);
       }
     } else {

@@ -35,7 +35,19 @@ public:
   ~UARTPort();
 
   // Open port for UART
-  int init();
+  static int initialize(uint8_t port_num, uint8_t buf_t,
+      uint8_t size, char *dev_name);
+
+  static uart::UARTPort *get_instance() {
+    return _instance;
+  }
+  
+  /**
+   * Print statistics
+   * @param reset, if true reset statistics afterwards
+   * @return true if something printed, false otherwise
+   */
+  bool print_statistics(bool reset);
 
   // Serial methods ------------------------------
   // @return serial_fd for desired port_num
@@ -88,9 +100,8 @@ public:
   // @return msg_type if msg is meant for u
   //         MSG_NULL if msg not meant for u
   //         MSG_FAILED If msg meant for u and incorrect
-  uint8_t parse_elka_msg(
-      elka_msg_s &elka_ret,
-      elka_msg_ack_s &elka_ack);
+  uint8_t parse_elka_msg(elka_msg_s &elka_ret);
+  uint8_t parse_elka_msg(elka_msg_ack_s &elka_msg);
 
   // Check ack with most recent message sent
   // Check ack with respect to port number from elka_ack.msg_id
@@ -109,6 +120,8 @@ private:
   bool resume_port() override;
 
   // Data members
+  static UARTPort *_instance; // Singleton port instance
+
   uint8_t _state; // state of Snapdragon UART
   int _serial_fd;
   char _dev_name[MAX_NAME_LEN];
@@ -143,6 +156,6 @@ private:
                          elka_msg_ack_s &elka_ack,
                          struct elka_msg_id_s &msg_id);
 
-  int deinit();
+  int deinitialize();
 };
 #endif

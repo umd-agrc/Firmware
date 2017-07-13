@@ -95,9 +95,13 @@ elka::SerialBuffer::SerialBuffer(dev_id_t port_id,
     PX4_ERR("Unsupported buffer type");
     errno = EINVAL;
   }
+
+  _buf_mutex = PTHREAD_MUTEX_INITIALIZER;
+  pthread_mutex_init(&_buf_mutex,NULL);
 }
 
 elka::SerialBuffer::~SerialBuffer() {
+  pthread_mutex_destroy(&_buf_mutex);
 }
 
 uint8_t elka::SerialBuffer::check_recent_acks(uint16_t msg_num) {
@@ -139,16 +143,8 @@ uint8_t elka::SerialBuffer::push_msg(
     uint16_t rmv_msg_num,
     uint8_t num_retries) {
   uint8_t msg_type;
-  // Check if message is already in the buffer.
-  // If so just update num_retries
-  // This prevents redundant messages from being added
-  // FIXME
-  /*
-  ElkaBufferMsg *ebm;
-  if ((ebm = get_buffer_msg(msg_num))) {
-    ebm->_num_retries = num_retries;
-  } else {
-  */
+
+  pthread_mutex_lock(&_buf_mutex);
 
     if (_type == ARRAY) {
       _buffer.push_back(ElkaBufferMsg(
@@ -169,14 +165,7 @@ uint8_t elka::SerialBuffer::push_msg(
       return MSG_FAILED;
     }
 
-    // Set _push_msg_num to follow msg_num
-    // for next time that a message is pushed
-    // Useful for sorting in the buffer
-    // FIXME This may cause a lot of redundant message numbers
-    //       It should be the case that no message has the same
-    //       msg_num and msg_id (except for msg_num rollover)
-    // _push_msg_num = msg_num + 1;
-  //}
+  pthread_mutex_unlock(&_buf_mutex);
 
   get_elka_msg_id_attr(NULL, NULL, NULL, &msg_type, NULL,
       msg_id);
@@ -185,12 +174,14 @@ uint8_t elka::SerialBuffer::push_msg(
 
 uint8_t elka::SerialBuffer::get_msg(
     elka_msg_s &elka_msg,
-    elka_msg_ack_s &elka_msg_ack,
-    bool tx) {
+    elka_msg_ack_s &elka_msg_ack) {
   dev_id_t snd_id; 
   uint8_t ret, msg_len, front_msg_type;
+
   // Ensure that buffer isn't empty and that front of buffer is not ACK
   if (_buffer.empty()) return MSG_NULL;
+
+  pthread_mutex_lock(&_buf_mutex);
 
   // Get message type for message at front of buffer
   front_msg_type = buffer_front_type();
@@ -236,29 +227,28 @@ uint8_t elka::SerialBuffer::get_msg(
     elka_msg_ack.result = _buffer.front().get_result();
   }
 
+  pthread_mutex_unlock(&_buf_mutex);
+
   return ret;
 }
 
 //FIXME fix qurt side
 elka::ElkaBufferMsg *elka::SerialBuffer::get_buffer_msg(
-    msg_id_t msg_id, uint16_t msg_num, bool tx) {
+    msg_id_t msg_id, uint16_t msg_num) {
 //#if defined(__PX4_QURT)
-  dev_id_t buf_snd_id, msg_snd_id;
 
-  if (tx)
-    get_elka_msg_id_attr(&msg_snd_id, NULL, NULL, NULL, NULL, msg_id);
-  else
-    get_elka_msg_id_attr(NULL, &msg_snd_id, NULL, NULL, NULL, msg_id);
+  pthread_mutex_lock(&_buf_mutex);
 
   for (std::vector<ElkaBufferMsg>::iterator it = _buffer.begin();
        it != _buffer.end(); it++) {
-    if (it->_rmv_msg_num == msg_num) {
-      get_elka_msg_id_attr(&buf_snd_id,
-          NULL, NULL, NULL, NULL, it->_msg_id);
-      if (!cmp_dev_id_t(buf_snd_id, msg_snd_id))
-        return &(*it);
+    if (it->_rmv_msg_num == msg_num &&
+        !cmp_msg_id_t(msg_id, it->_msg_id)) {
+      pthread_mutex_unlock(&_buf_mutex);
+      return &(*it);
     }
   }
+
+  pthread_mutex_unlock(&_buf_mutex);
   return NULL;
 
   /*
@@ -279,11 +269,13 @@ elka::ElkaBufferMsg *elka::SerialBuffer::get_buffer_msg(
 // TODO necessary to set time stamps?
 uint8_t elka::SerialBuffer::remove_msg(
     elka_msg_s &elka_msg,
-    elka_msg_ack_s &elka_msg_ack,
-    bool tx) {
+    elka_msg_ack_s &elka_msg_ack) {
   uint8_t ret;
 
-  ret = get_msg(elka_msg,elka_msg_ack,tx);
+  ret = get_msg(elka_msg,elka_msg_ack);
+  //FIXME Buffer unlocked here!
+  //      Potential for buffer to change without notice
+  //      and wrong element to be popped.
   if (pop_msg() != MSG_FAILED)
     return ret;
   else
@@ -292,8 +284,11 @@ uint8_t elka::SerialBuffer::remove_msg(
 
 uint8_t elka::SerialBuffer::pop_msg() {
   uint8_t ret;
+
   // Ensure that buffer isn't empty
   if (_buffer.empty()) return MSG_NULL;
+
+  pthread_mutex_lock(&_buf_mutex);
 
   if (_type == ARRAY) {
     _buffer.erase(_buffer.begin());
@@ -306,35 +301,26 @@ uint8_t elka::SerialBuffer::pop_msg() {
     ret = MSG_FAILED;
   }
 
+  pthread_mutex_unlock(&_buf_mutex);
+
   return ret;
 }
 
 //FIXME fix qurt side
-void elka::SerialBuffer::erase_msg(msg_id_t msg_id, uint16_t msg_num,
-    bool tx) {
-  dev_id_t buf_snd_id, msg_snd_id;
-
-  if (tx)
-    get_elka_msg_id_attr(&msg_snd_id, NULL, NULL, NULL, NULL, msg_id);
-  else
-    get_elka_msg_id_attr(NULL, &msg_snd_id, NULL, NULL, NULL, msg_id);
-
+void elka::SerialBuffer::erase_msg(
+    msg_id_t msg_id, uint16_t msg_num) {
 //#if defined(__PX4_QURT)
   // Search beginning at end of array bc this should be closer to
   // msg_num in most expected use cases
   for (std::vector<ElkaBufferMsg>::reverse_iterator it =
        _buffer.rbegin();
        it != _buffer.rend(); it++) {
-    if (it->_rmv_msg_num == msg_num) {
-      get_elka_msg_id_attr(&buf_snd_id,
-          NULL, NULL, NULL, NULL, it->_msg_id);
-      if (!cmp_dev_id_t(buf_snd_id, msg_snd_id)) {
-        PX4_INFO("erasing msg here");
-        _buffer.erase(--(it.base()));
-        break;
-      }
+    if (it->_rmv_msg_num == msg_num &&
+        !cmp_msg_id_t(msg_id, it->_msg_id)) {
+      _buffer.erase(--(it.base()));
+      break;
     }
-  
+  }
 
   /*
 #elif defined(__PX4_POSIX)
@@ -539,6 +525,7 @@ elka::CommPort::CommPort(uint8_t port_n, uint8_t port_t,
   _rx_buf = new SerialBuffer(_id,buf_t,size);
 
   _state = STATE_STOP;
+
 }
 
 elka::CommPort::~CommPort() {
@@ -637,7 +624,7 @@ uint8_t elka::CommPort::get_msg(
     sb = _rx_buf;
   }
 
-  return sb->get_msg(elka_msg, elka_msg_ack, tx);
+  return sb->get_msg(elka_msg, elka_msg_ack);
 }
 
 // Message numbers must be incremented upon message removal b/c
@@ -654,7 +641,7 @@ uint8_t elka::CommPort::remove_msg(
     sb = _rx_buf;
   }
 
-  return sb->remove_msg(elka_msg, elka_msg_ack, tx);
+  return sb->remove_msg(elka_msg, elka_msg_ack);
 }
 
 uint8_t elka::CommPort::pop_msg(bool tx) {
@@ -667,6 +654,19 @@ uint8_t elka::CommPort::pop_msg(bool tx) {
   }
 
   return sb->pop_msg();
+}
+
+void elka::CommPort::erase_msg(
+    msg_id_t msg_id, uint16_t msg_num, bool tx) {
+  elka::SerialBuffer *sb;
+
+  if (tx) {
+    sb = _tx_buf;
+  } else {
+    sb = _rx_buf;
+  }
+
+  sb->erase_msg(msg_id, msg_num);
 }
 
 uint8_t elka::CommPort::parse_routing_msg(

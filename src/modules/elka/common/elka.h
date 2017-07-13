@@ -289,6 +289,12 @@ void get_elka_msg_id_attr(
     uint8_t *snd_params, uint8_t *msg_type, uint8_t *length,
     msg_id_t msg_id);
 
+inline int8_t cmp_msg_id_t(msg_id_t m1, msg_id_t m2) {
+  if (m1 < m2) return -1;
+  else if (m1 > m2) return 1;
+  else return 0;
+}
+
 // Return true if message is broadcast message
 inline bool broadcast_msg(msg_id_t &msg_id) {
   dev_id_t rcv_id;

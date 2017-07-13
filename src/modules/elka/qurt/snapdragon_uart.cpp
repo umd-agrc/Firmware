@@ -18,13 +18,17 @@
 
 extern "C" { __EXPORT int snapdragon_uart_main(int argc, char *argv[]); }
 
-static int daemon_task[MAX_UART_PORTS];
-static volatile bool thread_should_exit[MAX_UART_PORTS];
-static volatile bool thread_running[MAX_UART_PORTS];
+// Thread/task 0 is rx loop
+// Thread/task 1 is parse loop
+static int daemon_task[2];
+static volatile bool thread_should_exit[2];
+static volatile bool thread_running[2];
 
-int snapdragon_uart_dev_loop(int argc, char **argv);
+void usage();
+int elka_rx_loop(int argc, char **argv);
+int elka_parse_loop(int argc, char **argv);
 
-static uart::Manager *mgr = nullptr;
+static uart::UARTPort *elka_dev = nullptr;
 
 int snapdragon_uart_main(int argc, char *argv[]) {
 
@@ -36,124 +40,126 @@ status>");
 
 	if (!strcmp(argv[1], "start")) {
 
-    if (mgr == nullptr) {
-      if (!uart::Manager::initialize()) {
-        PX4_ERR("snapdragon_uart manager alloc failed");
-        return -ENOMEM;
-      }
-
-      // Create the manager
-      mgr = uart::Manager::get_instance();
-
-      if (mgr == nullptr) {
-        return -errno;
-      }
-    }
-
-    uint8_t port_num;
-    char dev_name[MAX_NAME_LEN];
+    uint8_t port_num=0;
     if (argc < 3) {
       PX4_WARN("Missing port number specification");
       return PX4_OK;
     }
     
-    uint8_t i=2;// Start at argv index
-    while (argv[i]) {
-      if (!(port_num = (uint8_t) std::atoi(argv[i])) ||
-          port_num < 1 || port_num > MAX_UART_PORTS) {
-        PX4_WARN("Invalid port number specification %s",
-            argv[i]);
-        continue;
-      } else if (i-2 >= MAX_UART_PORTS) {
-        PX4_WARN("Too many ports specified");
+    // Start at argv index
+    uint8_t dev_args = 2;
+    bool collecting_args = true;
+    while (collecting_args) {
+      if ((!argv[dev_args] || std::atoi(argv[dev_args])) &&
+          port_num) {
+        collecting_args = false;
+      } else if (!strcmp(argv[dev_args],"-p") && !port_num) {
+        if (!(port_num = (uint8_t)std::atoi(argv[++dev_args])) ||
+          port_num < 1 || port_num > MAX_SERIAL_PORTS) {
+          PX4_WARN("Invalid port number specification %s",
+              argv[dev_args-1]);
+          return PX4_ERROR;
+        }
 
-      } else if (mgr !=nullptr
-        && !mgr->check_uart_dev(port_num)) {
-        thread_should_exit[port_num] = false;
-        sprintf(dev_name,"/dev/tty-%d",port_num);
-        daemon_task[port_num] = px4_task_spawn_cmd(
-          dev_name,
+        dev_args++;
+
+      } else {
+        PX4_ERR("Invalid argument");
+        usage();
+        return PX4_OK;
+      }
+    }
+
+    uint8_t queue_sz = 42;
+    uint8_t buf_type = PRIORITY_QUEUE; 
+    char parse_name[MAX_NAME_LEN], rx_name[MAX_NAME_LEN],
+         dev_name[MAX_NAME_LEN];
+
+    sprintf(dev_name, "elka");
+    sprintf(parse_name,"elka_parse");
+    sprintf(rx_name,"elka_rx");
+
+    if (elka_dev == nullptr) {
+      if (!uart::UARTPort::initialize(
+            port_num, buf_type, queue_sz, dev_name)) {
+        PX4_ERR("elka device alloc failed");
+        return -ENOMEM;
+      }
+
+      elka_dev = uart::UARTPort::get_instance();
+
+      if (elka_dev == nullptr) {
+        return -errno;
+      }
+    }
+
+    // Start parse task
+    thread_should_exit[1] = false;
+    daemon_task[1] = px4_task_spawn_cmd(
+      parse_name,
+      SCHED_DEFAULT,
+      SCHED_PRIORITY_DEFAULT,
+      1200,
+      elka_parse_loop,
+      NULL);
+
+    unsigned constexpr max_wait_us = 1000000;
+    unsigned constexpr max_wait_steps = 2000;
+    unsigned j;
+
+    for (j=0; j < max_wait_steps; j++) {
+      usleep(max_wait_us / max_wait_steps);
+      if (thread_running[0]) {
+        // Start rx task
+        thread_should_exit[0] = false;
+        daemon_task[0] = px4_task_spawn_cmd(
+          rx_name,
           SCHED_DEFAULT,
           SCHED_PRIORITY_DEFAULT,
           1000,
-          snapdragon_uart_dev_loop,
-          (char * const *)&argv[i]);
- 
-        unsigned constexpr max_wait_us = 1000000;
-        unsigned constexpr max_wait_steps = 2000;
-        unsigned j;
+          elka_rx_loop,
+          NULL);
 
         for (j=0; j < max_wait_steps; j++) {
           usleep(max_wait_us / max_wait_steps);
-          if (thread_running[port_num]) {
+          if (thread_running[0]) {
             break;
           }
         }
-        return !(j < max_wait_steps);
+        break;
       }
+    }
 
-      i++;
-    } 
+    return !(j < max_wait_steps);
 
 	} else if (!strcmp(argv[1],"stop")) {
-    if (argc < 3) {
-      // stop all ports
-      for (uint8_t i=0; i < MAX_UART_PORTS; i++) {
-        if (!thread_running[i]) {
-          PX4_WARN("uart dev %d already stopped",i);
-          return PX4_OK;
-        }
-
-        thread_should_exit[i] = true;
-
-        while(thread_running[i]) {
-          usleep(200000);
-          PX4_WARN(".");
-        }
-
-        PX4_WARN("terminated.");
-
-        return PX4_OK;
-      }
-    } else {
-      uint8_t i=2, port_num;
-      while (argv[i]) {
-        if (!(port_num = (uint8_t) std::atoi(argv[i]))) {
-          PX4_WARN("Invalid stop command, port %s not available",
-            argv[i]);
-          i++;
-          continue;
-        }
-
-        if (!thread_running[i]) {
-          PX4_WARN("uart dev %d already stopped",i);
-          return PX4_OK;
-        }
-
-        thread_should_exit[i] = true;
-
-        while(thread_running[i]) {
-          usleep(200000);
-          PX4_WARN(".");
-        }
-
-        PX4_WARN("terminated.");
-
-        i++;
-      }
-
+    if (!thread_running[0] &&
+        !thread_running[1]) {
+      PX4_WARN("elka dev already stopped");
       return PX4_OK;
     }
 
-  } else if (!strcmp(argv[1],"status")) {
-    if (mgr != nullptr) {
-      mgr->print_statistics(true);
-    } else {
-      PX4_INFO("snapdragon_uart is not running");
+    thread_should_exit[0] = true;
+    thread_should_exit[1] = true;
+
+    while(thread_running[0] ||
+          thread_running[1]) {
+      usleep(200000);
+      PX4_WARN(".");
     }
+
+    PX4_WARN("terminated.");
 
     return PX4_OK;
 
+  } else if (!strcmp(argv[1],"status")) {
+    if (elka_dev != nullptr) {
+      elka_dev->print_statistics(true);
+    } else {
+      PX4_INFO("elka is not running");
+    }
+
+    return PX4_OK;
   } else {
 		PX4_WARN("Action not supported");
 	}
@@ -161,21 +167,7 @@ status>");
 	return PX4_OK;
 }
 
-int snapdragon_uart_dev_loop(int argc, char **argv) {
-  char dev_nm[MAX_NAME_LEN];
-  uint8_t port_num = (uint8_t)std::atoi(argv[0]),
-          buf_type = PRIORITY_QUEUE;
-
-  sprintf(dev_nm,"/dev/tty-%d",port_num);
-
-  PX4_INFO("Starting port %s for uart", dev_nm); fflush(stdout);
-
-  uint8_t queue_sz = 42;
-  uart::UARTPort *snapdragon = mgr->get_uart_dev(
-      port_num, buf_type, queue_sz, dev_nm);
-
-  snapdragon->assign_read_callback();
-
+int elka_rx_loop(int argc, char **argv) {
   // Define poll_return for defined file descriptors
   int poll_ret;
 
@@ -189,26 +181,7 @@ int snapdragon_uart_dev_loop(int argc, char **argv) {
   orb_set_interval(elka_ack_sub_fd, 10);
   orb_set_interval(elka_sub_fd, 10);
 
-  /*
-  struct input_rc_s input_rc;
-  struct elka_msg_ack_s elka_ack_snd, elka_ack_rcv;
-  struct elka_msg_s elka_snd, elka_snd;
-  memset(&input_rc, 0, sizeof(input_rc));
-  memset(&elka_ack_snd, 0, sizeof(elka_ack_snd));
-  memset(&elka_ack_rcv, 0, sizeof(elka_ack_rcv));
-  memset(&elka_snd, 0, sizeof(elka_snd));
-  memset(&elka_rcv, 0, sizeof(elka_rcv));
-  
-  // Advertise elka msg and elka msg ack
-  orb_advert_t elka_ack_pub = orb_advertise(
-      ORB_ID(elka_msg_ack), &elka_ack_snd);
-  orb_advert_t elka_msg_pub = orb_advertise(
-      ORB_ID(elka_msg), &elka_snd);
-  //orb_advert_t elka_ack_pub = orb_advertise(
-  //    ORB_ID(elka_msg_ack), NULL);
-  //orb_advert_t elka_msg_pub = orb_advertise(
-  //    ORB_ID(elka_msg), NULL);
-  */
+  dev_id_t snd_id;
 
   // Define topic subscribers to wait for with polling
   px4_pollfd_struct_t fds[] = {
@@ -219,27 +192,10 @@ int snapdragon_uart_dev_loop(int argc, char **argv) {
 
   int error_counter = 0;
 
-  thread_running[port_num] = true;
+  thread_running[0] = true;
 
-  // nxt_msg_type contains next message for
-  // send & receive
-  uint8_t parse_res, ack_res, nxt_msg_type[2]; 
-  // snd_id is sender id for received elka_msgs and elka_msg_acks
-  dev_id_t snd_id;
-
-  //FIXME debugging
-  /*
-  // Set PX4 elka module to paused
-  snapdragon->set_dev_state_msg(snapdragon->_elka_snd,
-                                STATE_START,
-                                true);
-                                */
-  //snapdragon->push_msg(snapdragon->_elka_snd, true);
-
-  while (!thread_should_exit[port_num]) {
-    snapdragon->update_time();
-
-    usleep(500000);
+  while (!thread_should_exit[0]) {
+    elka_dev->update_time();
 
     // Wait for up to 500ms for data
     // FIXME this should be tied to msg threshold
@@ -260,107 +216,111 @@ int snapdragon_uart_dev_loop(int argc, char **argv) {
 
       if (fds[0].revents & POLLIN) { // input_rc
         orb_copy(ORB_ID(input_rc), input_rc_sub_fd,
-            &snapdragon->_input_rc);
-
-        /*
-        // TODO check paused before setting and sending for efficiency
-        // Set PX4 elka module to paused
-        snapdragon->set_dev_state_msg(elka_snd_px4, STATE_PAUSE,
-            true, true);
-        snapdragon->push_msg(elka_snd_px4, true, true);
-        */
+            &elka_dev->_input_rc);
       }
       
       if (fds[1].revents & POLLIN) { // elka_msg_ack
         orb_copy(ORB_ID(elka_msg_ack), elka_ack_sub_fd,
-            &snapdragon->_elka_ack_rcv);
-        
-        // TODO push to _rc_buf and check in a parse_elka_msg()
-        // TODO Check message timestamp
-        if ( (ack_res = snapdragon->check_ack(
-                snapdragon->_elka_ack_rcv)
-              == elka_msg_ack_s::ACK_FAILED) ) {
-          PX4_ERR("Failed acknowledgement for msg id: " PRMIT "",
-              snapdragon->_elka_ack_rcv.msg_id);
-        } else if (ack_res != elka_msg_ack_s::ACK_NULL) {
-        }
+            &elka_dev->_elka_ack_rcv);
+
+        // Push msg to rx_buf 
+        // Do not push if you are the sender to prevent cycles from
+        // forming
+        get_elka_msg_id_attr(&snd_id, NULL, NULL, NULL, NULL,
+            elka_dev->_elka_ack_rcv.msg_id);
+        if (cmp_dev_id_t(snd_id, elka_dev->_id))
+          elka_dev->push_msg(elka_dev->_elka_ack_rcv, false);
       }
 
       if (fds[2].revents & POLLIN) { // elka_msg
         // TODO Check message timestamp
-        //if (elka_rcv.timestamp - snapdragon->_now < msg_threshold) {
-          orb_copy(ORB_ID(elka_msg), elka_sub_fd,
-                    &snapdragon->_elka_rcv);
+        orb_copy(ORB_ID(elka_msg), elka_sub_fd,
+                  &elka_dev->_elka_rcv);
 
-          // Push msg to rx_buf 
-          // Do not push if you are the sender to prevent cycles from
-          // forming
-          get_elka_msg_id_attr(&snd_id, NULL, NULL, NULL, NULL,
-              snapdragon->_elka_rcv.msg_id);
-          if (cmp_dev_id_t(snd_id, snapdragon->_id))
-            snapdragon->push_msg(snapdragon->_elka_rcv, false);
-
-          usleep(5000);
-        //}
+        // Push msg to rx_buf 
+        // Do not push if you are the sender to prevent
+        // cycles from forming
+        get_elka_msg_id_attr(&snd_id, NULL, NULL, NULL, NULL,
+            elka_dev->_elka_rcv.msg_id);
+        if (cmp_dev_id_t(snd_id, elka_dev->_id))
+          elka_dev->push_msg(elka_dev->_elka_rcv, false);
       }
-
-      // remove and parse message from rx_buf
-      // send ack if the message requires one 
-      if ( (nxt_msg_type[1] = snapdragon->remove_msg(
-              snapdragon->_elka_rcv,
-              snapdragon->_elka_ack_rcv,
-              false)) != MSG_NULL &&
-          (parse_res = snapdragon->parse_elka_msg(
-              snapdragon->_elka_rcv,
-              snapdragon->_elka_ack_snd))
-          == MSG_FAILED ) {
-        PX4_ERR("Failed message for msg id: %" PRMIT "",
-          snapdragon->_elka_rcv.msg_id);
-      }
-
-      if (parse_res & TYPE_EXPECTING_ACK) {
-        snapdragon->push_msg(snapdragon->_elka_ack_snd, true);
-      }
-    
-      if ( (nxt_msg_type[0] = snapdragon->get_msg(
-                                snapdragon->_elka_snd,
-                                snapdragon->_elka_ack_snd,
-                                true))
-           != MSG_NULL &&
-           nxt_msg_type[0] != MSG_FAILED ) {
-
-        //PX4_INFO("sending msg on port %d w msg_id %d",
-        //            i, elka_snd.msg_id);
-        //orb_publish(ORB_ID(elka_msg), elka_msg_pub, &elka_snd);
-        snapdragon->send_msg(snapdragon->_elka_snd);
-
-        if (!(snapdragon->_elka_snd.msg_id & ID_EXPECTING_ACK))
-          // TODO This scheme of popping only works if messages are
-          // pushed here and not in a separate thread
-          snapdragon->pop_msg(true);
-        else // Sleep for a short time to let ack process
-          usleep(20000);
-      }
-
-      // Check if input_rc msgs are gone, and we can start using our messages
-      // again
-      /*
-      if (input_rc.timestamp - snapdragon->_now > msg_threshold) {
-        // TODO publish useful message
-        // TODO send useful message thru UART
-        if (false) orb_publish(ORB_ID(elka_msg), elka_msg_pub, &elka_snd_px4);
-      } else {
-        PX4_INFO("paused");
-      }
-      */
     }
+
+    usleep(500000);
   }
 
-  mgr->stop_uart_dev(port_num);
+  thread_running[0] = false;
 
-  PX4_INFO("Exiting uart device thread %d",port_num);
+  return PX4_OK;
+}
 
-  thread_running[port_num] = false;
+int elka_parse_loop(int argc, char **argv) {
+  thread_running[1] = true;
+  uint8_t nxt_msg_type[2], //nxt_msg_len[2],
+          parse_res;
 
+  while (!thread_should_exit[1]) {
+    // Remove next message from _rx_buf to parse
+    // Skip parsing if there is no message in buffer
+    // Push ack if necessary
+    if ((nxt_msg_type[1] = elka_dev->remove_msg(elka_dev->_elka_rcv, 
+                                           elka_dev->_elka_ack_rcv,
+                                           false)) == MSG_ACK) {
+      if ((parse_res = elka_dev->parse_elka_msg(
+                          elka_dev->_elka_ack_rcv))
+          == MSG_FAILED) {
+        PX4_ERR("Failed message for msg id: " PRMIT "",
+            elka_dev->_elka_ack_rcv.msg_id);
+      }
+    } else if (nxt_msg_type[1] != MSG_NULL) {
+      // Parse message
+      // Send ack if the message requires one 
+      if ((parse_res = elka_dev->parse_elka_msg(
+                          elka_dev->_elka_rcv))
+          == MSG_FAILED) {
+        PX4_ERR("Failed message for msg id: " PRMIT "",
+            elka_dev->_elka_rcv.msg_id);
+      } else if (parse_res & TYPE_EXPECTING_ACK) {
+        elka_dev->push_msg(elka_dev->_elka_ack_snd, true);
+      }
+    }
+
+    // Transmit next message from _tx_sb
+    if ( (nxt_msg_type[0] = elka_dev->get_msg(
+                              elka_dev->_elka_snd,
+                              elka_dev->_elka_ack_snd,
+                              true))
+         == MSG_ACK ) {
+      elka_dev->send_msg(elka_dev->_elka_ack_snd);
+    } else if (nxt_msg_type[0] != MSG_NULL &&
+               nxt_msg_type[0] != MSG_FAILED ) {
+
+      elka_dev->send_msg(elka_dev->_elka_snd);
+
+      if (!(elka_dev->_elka_snd.msg_id & ID_EXPECTING_ACK)) {
+        // TODO This scheme of popping only works if messages are
+        // pushed here and not in a separate thread
+        elka_dev->pop_msg(true);
+      } else {// Sleep for a short time to let ack process
+        usleep(20000);
+      }
+    }
+
+    // Check if input_rc msgs are gone, and we can start using our messages
+    // again
+    /*
+    if (input_rc.timestamp - elka_dev->_now > msg_threshold) {
+      // TODO publish useful message
+      // TODO send useful message thru UART
+      if (false) orb_publish(ORB_ID(elka_msg), elka_msg_pub, &elka_snd_px4);
+    } else {
+      PX4_INFO("paused");
+    }
+    */
+
+  }
+
+  thread_running[1] = false;
   return PX4_OK;
 }

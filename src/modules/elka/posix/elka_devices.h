@@ -30,7 +30,7 @@ public:
   // elka_snd is msg to send from tx buf
   // elka_ret is msg to push to rx buf
   // elka_rcv_cmd is msg to be parsed from rx buf
-  struct elka_msg_s _elka_snd, _elka_ret, _elka_ret_cmd;
+  struct elka_msg_s _elka_snd, _elka_rcv;
 
   orb_advert_t _elka_msg_pub;
   orb_advert_t _elka_ack_pub;
@@ -40,8 +40,21 @@ public:
 
   ~PX4Port();
 
-  // Start serial thread
-  int init();
+  static int initialize(
+      uint8_t port_num, uint8_t port_type, uint8_t buf_type,
+      uint8_t queue_sz, char *dev_name);
+
+  static elka::PX4Port *get_instance() {
+    return _instance;
+  }
+
+  /**
+   * Print statistics
+   * @param reset, if true reset statistics afterwards
+   * @return true if something printed, false otherwise
+   */
+  bool print_statistics(bool reset);
+
 
   // Add message to buffer
   // Adds message to buffer for all applicable
@@ -65,6 +78,7 @@ public:
   //         MSG_NULL if msg not meant for u
   //         MSG_FAILED If msg meant for u and incorrect
   uint8_t parse_elka_msg(elka_msg_s &elka_ret);
+  uint8_t parse_elka_msg(elka_msg_ack_s &elka_msg);
 
   // Check ack for sent message
   // Check ack with respect to port number from elka_ack.msg_id
@@ -97,6 +111,9 @@ private:
   std::map<dev_id_t, uint8_t> _port_num_map;
   */
 
+  // Data members
+  static PX4Port *_instance; // Singleton port instance
+
   // This must be updated frequently thru callback or otherwise!
   hrt_abstime _now;
   char _dev_name[MAX_NAME_LEN];
@@ -105,7 +122,7 @@ private:
   void wait_for_child(Child *child);
 
   // Class methods
-  int deinit();
+  int deinitialize();
 
   // Helper functions for parsing returned elka message based on current state
   // @return msg type:

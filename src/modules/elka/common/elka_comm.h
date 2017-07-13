@@ -5,6 +5,7 @@
 
 #include <vector>
 #include <map>
+#include <pthread.h>
 
 namespace elka {
   struct SerialBuffer;
@@ -61,6 +62,9 @@ private:
   uint8_t _type;
   dev_id_t _port_id;
 
+  // Mutexes for _buffer 
+  pthread_mutex_t _buf_mutex;
+
 public:
   SerialBuffer(dev_id_t port_id, uint8_t buf_type, uint16_t size);
   ~SerialBuffer();
@@ -98,8 +102,7 @@ public:
   // @return msg type if msg is gotten
   //         MSG_NULL if msg is not gotten
   uint8_t get_msg(elka_msg_s &elka_msg,
-                  elka_msg_ack_s &elka_msg_ack,
-                  bool tx);
+                  elka_msg_ack_s &elka_msg_ack);
 
   // Get pointer to vector element referenced by snd_id and msg_num
   // @param msg_id = msg_id to use to get snd_id
@@ -110,8 +113,7 @@ public:
   // @return pointer to matching ElkaBufferMsg if element exists //         nullptr if element doesn't exist
   //         Note: Return value not valid if buffer is subsequently
   //         re-ordered
-  ElkaBufferMsg *get_buffer_msg(msg_id_t msg_id, uint16_t msg_num,
-      bool ack);
+  ElkaBufferMsg *get_buffer_msg(msg_id_t msg_id, uint16_t msg_num);
 
   // Retrieve message from buffer and set to elka_msg
   // Then remove message from buffer
@@ -121,8 +123,7 @@ public:
   // @return msg type if msg is removed
   //         MSG_NULL if msg is not removed
   uint8_t remove_msg(elka_msg_s &elka_msg,
-                     elka_msg_ack_s &elka_msg_ack,
-                     bool tx); 
+                     elka_msg_ack_s &elka_msg_ack);
 
   // Erase message at front of buffer
   // @return  MSG_NULL if msg is removed or buffer is empty
@@ -134,9 +135,7 @@ public:
   //                 Used to identify correct sender
   // @param msg_num = message number to remove
   //                      if not set then pop front message
-  // @param tx = true if sending message
-  //             false if receiving message
-  void erase_msg(msg_id_t msg_id, uint16_t msg_num, bool tx);
+  void erase_msg(msg_id_t msg_id, uint16_t msg_num);
 
   // Check buffer front message type
   // Useful to determine whether message is elka_msg
@@ -208,6 +207,7 @@ struct elka::CommPort {
   struct elka::SerialBuffer *_rx_buf;
   uint8_t _port_num;
   dev_id_t _id;
+
   // _id is included in _routing_table
   std::map<dev_id_t, DeviceRoute, dev_id_tCmp> _routing_table;
   uint8_t _snd_params;
@@ -261,6 +261,14 @@ struct elka::CommPort {
   // Removes message from front of buffer
   uint8_t pop_msg(bool tx); 
 
+  // Erase specified message from buffer
+  // @param msg_id = msg id of msg to remove
+  //                 Used to identify correct sender
+  // @param msg_num = message number to remove
+  //                      if not set then pop front message
+  // @param tx = true if sending message
+  //             false if receiving message
+  void erase_msg(msg_id_t msg_id, uint16_t msg_num, bool tx);
 
 
   //FIXME currently depends on dev_id_t being 2B
