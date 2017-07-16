@@ -295,6 +295,34 @@ elka::ElkaBufferMsg *elka::SerialBuffer::get_buffer_msg(
 */
 }
 
+elka::ElkaBufferMsg *elka::SerialBuffer::get_buffer_msg(
+    dev_id_t snd_id,
+    dev_id_t rcv_id,
+    uint16_t msg_num) {
+  dev_id_t msg_snd_id, msg_rcv_id;
+  pthread_mutex_lock(&_buf_mutex);
+
+  for (std::vector<ElkaBufferMsg>::iterator it =
+        _buffer.begin();
+       it != _buffer.end(); it++) {
+    get_elka_msg_id_attr(
+        &msg_snd_id, &msg_rcv_id,
+        NULL, NULL, NULL,
+        it->_msg_id);
+
+    if (msg_num != 0 &&
+        it->_rmv_msg_num == msg_num &&
+        !cmp_dev_id_t(snd_id, msg_snd_id) &&
+        !cmp_dev_id_t(rcv_id, msg_rcv_id)) {
+      pthread_mutex_unlock(&_buf_mutex);
+      return &(*it);
+    }
+  }
+
+  pthread_mutex_unlock(&_buf_mutex);
+  return nullptr;
+}
+
 // TODO necessary to set time stamps?
 uint8_t elka::SerialBuffer::remove_msg(
     elka_msg_s &elka_msg,

@@ -329,10 +329,12 @@ uint8_t uart::UARTPort::parse_elka_msg(elka_msg_s &elka_msg) {
 
   // Send ack if necessary 
   if (parse_res & TYPE_EXPECTING_ACK) {
+    /*
     PX4_INFO("in parse\tmsg_num: %" PRIu16 " num_retries: %d\n\
 ack msg_num: %" PRIu16 " ack num_retries: %d",
         elka_msg.msg_num, elka_msg.num_retries,
         elka_ack.msg_num, elka_ack.num_retries);
+        */
     push_msg(elka_ack, true);
   }
 
@@ -431,18 +433,18 @@ uint8_t uart::UARTPort::parse_elka_ctl(elka_msg_s &elka_msg,
 // Check ack with respect to port number from elka_ack.msg_id
 uint8_t uart::UARTPort::check_ack(struct elka_msg_ack_s &elka_ack) {
   elka::SerialBuffer *sb;
-  struct elka_msg_id_s msg_id;
+  struct elka_msg_id_s ack_id;
   uint8_t ret;
 
-  get_elka_msg_id_attr(&msg_id, elka_ack.msg_id);
+  get_elka_msg_id_attr(&ack_id, elka_ack.msg_id);
 
   // Check that ack is meant for this device
-  if (cmp_dev_id_t(msg_id.rcv_id, _id)) {
+  if (cmp_dev_id_t(ack_id.rcv_id, _id)) {
     return elka_msg_ack_s::ACK_NULL;
   } else {
     sb = _tx_buf;
   }
-
+ 
   // First check if message number has recently been acked
   // If message has recently been acked then
   // return elka_msg_ack_s::ACK_NULL
@@ -453,9 +455,11 @@ uint8_t uart::UARTPort::check_ack(struct elka_msg_ack_s &elka_ack) {
   //    Else return elka_msg_ack_s::ACK_NULL
   if ((ret = sb->check_recent_acks(elka_ack.msg_num)) !=
               elka_msg_ack_s::ACK_NULL) {
+    msg_id_t erase_msg_id;
     elka::ElkaBufferMsg *ebm;
+   
     if ((ebm = sb->get_buffer_msg(
-            elka_ack.msg_id, elka_ack.msg_num))) {
+            ack_id.rcv_id, ack_id.snd_id, elka_ack.msg_num))) {
       if ( (ret = check_elka_ack(elka_ack,
                   ebm->_msg_id,
                   ebm->_rmv_msg_num,
@@ -466,12 +470,11 @@ uint8_t uart::UARTPort::check_ack(struct elka_msg_ack_s &elka_ack) {
             ebm->_num_retries);
       } else if (ret != elka_msg_ack_s::ACK_NULL) {
         // Message received and processed fine, so erase it
-        PX4_INFO("erasing message");
-        sb->erase_msg(elka_ack.msg_id, elka_ack.msg_num);
+        erase_msg_id = ebm->_msg_id;
+        //sb->erase_msg(elka_ack.msg_id, elka_ack.msg_num);
+        sb->erase_msg(erase_msg_id, elka_ack.msg_num);
         sb->push_recent_acks(elka_ack.msg_num);
       }
-    } else {
-      ret = elka_msg_ack_s::ACK_NULL;
     }
   }
 

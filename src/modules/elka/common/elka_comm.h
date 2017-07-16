@@ -124,6 +124,9 @@ public:
   //         Note: Return value not valid if buffer is subsequently
   //         re-ordered
   ElkaBufferMsg *get_buffer_msg(msg_id_t msg_id, uint16_t msg_num);
+  ElkaBufferMsg *get_buffer_msg(dev_id_t snd_id,
+                                dev_id_t rcv_id,
+                                uint16_t msg_num);
 
   // Retrieve message from buffer and set to elka_msg
   // Then remove message from buffer

@@ -268,10 +268,6 @@ int elka_rx_loop(int argc, char **argv) {
         orb_copy(ORB_ID(elka_msg_ack), elka_ack_sub_fd,
             &elka_dev->_elka_ack_rcv);
 
-
-        PX4_INFO("received msg");
-        print_elka_msg(elka_dev->_elka_ack_rcv);
-
         // TODO Check message timestamp
         get_elka_msg_id_attr(&snd_id, NULL, NULL, NULL, NULL,
             elka_dev->_elka_ack_rcv.msg_id);

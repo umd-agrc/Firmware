@@ -239,8 +239,6 @@ int elka_rx_loop(int argc, char **argv) {
         orb_copy(ORB_ID(elka_msg), elka_sub_fd,
                   &elka_dev->_elka_rcv);
 
-        PX4_INFO("received msg");
-        print_elka_msg(elka_dev->_elka_rcv);
         // Push msg to rx_buf 
         // Do not push if you are the sender to prevent
         // cycles from forming

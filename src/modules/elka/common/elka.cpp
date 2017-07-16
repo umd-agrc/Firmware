@@ -138,7 +138,6 @@ void get_elka_msg_id_attr(
     *length = (msg_id & MESSAGE_LENGTH);
 }
 
-//FIXME separate 
 // Check ELKA ack against known msg_id and msg_num
 uint8_t check_elka_ack(struct elka_msg_ack_s &elka_msg_ack,
     msg_id_t &msg_id, uint16_t &msg_num, uint8_t num_retries) {
@@ -178,6 +177,7 @@ uint8_t check_elka_ack(struct elka_msg_ack_s &elka_msg_ack,
       return elka_msg_ack.result;
     }
   } else { // msg not for u
+    PX4_INFO("derfderfderfderfderf");
     return elka_msg_ack_s::ACK_NULL;
   }
 }
