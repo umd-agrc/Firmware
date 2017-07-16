@@ -39,22 +39,26 @@ status>");
 	}
 
 	if (!strcmp(argv[1], "start")) {
-
-    uint8_t port_num=0;
     if (argc < 3) {
       PX4_WARN("Missing port number specification");
       return PX4_OK;
     }
-    
+
+    uint8_t port_num=0;
     // Start at argv index
     uint8_t dev_args = 2;
     bool collecting_args = true;
     while (collecting_args) {
+      // Done collecting arguments if
+      // (no more arguments
+      // or if the next argument is a number)
+      // and we already have a port number
       if ((!argv[dev_args] || std::atoi(argv[dev_args])) &&
           port_num) {
         collecting_args = false;
       } else if (!strcmp(argv[dev_args],"-p") && !port_num) {
-        if (!(port_num = (uint8_t)std::atoi(argv[++dev_args])) ||
+        dev_args++;
+        if (!(port_num = (uint8_t)std::atoi(argv[dev_args])) ||
           port_num < 1 || port_num > MAX_SERIAL_PORTS) {
           PX4_WARN("Invalid port number specification %s",
               argv[dev_args-1]);
@@ -109,7 +113,7 @@ status>");
 
     for (j=0; j < max_wait_steps; j++) {
       usleep(max_wait_us / max_wait_steps);
-      if (thread_running[0]) {
+      if (thread_running[1]) {
         // Start rx task
         thread_should_exit[0] = false;
         daemon_task[0] = px4_task_spawn_cmd(
@@ -198,8 +202,7 @@ int elka_rx_loop(int argc, char **argv) {
     elka_dev->update_time();
 
     // Wait for up to 500ms for data
-    // FIXME this should be tied to msg threshold
-    poll_ret = px4_poll(&fds[0], sizeof(fds)/sizeof(fds[0]), 500);
+    poll_ret = px4_poll(&fds[0], sizeof(fds)/sizeof(fds[0]), 200);
 
     if (poll_ret == 0) {
       // None of our providers is giving us data
@@ -213,7 +216,6 @@ int elka_rx_loop(int argc, char **argv) {
 
       error_counter++;
     } else {
-
       if (fds[0].revents & POLLIN) { // input_rc
         orb_copy(ORB_ID(input_rc), input_rc_sub_fd,
             &elka_dev->_input_rc);
@@ -237,17 +239,18 @@ int elka_rx_loop(int argc, char **argv) {
         orb_copy(ORB_ID(elka_msg), elka_sub_fd,
                   &elka_dev->_elka_rcv);
 
+        PX4_INFO("received msg");
+        print_elka_msg(elka_dev->_elka_rcv);
         // Push msg to rx_buf 
         // Do not push if you are the sender to prevent
         // cycles from forming
         get_elka_msg_id_attr(&snd_id, NULL, NULL, NULL, NULL,
             elka_dev->_elka_rcv.msg_id);
-        if (cmp_dev_id_t(snd_id, elka_dev->_id))
+        if (cmp_dev_id_t(snd_id, elka_dev->_id)) {
           elka_dev->push_msg(elka_dev->_elka_rcv, false);
+        }
       }
     }
-
-    usleep(500000);
   }
 
   thread_running[0] = false;
@@ -261,30 +264,33 @@ int elka_parse_loop(int argc, char **argv) {
           parse_res;
 
   while (!thread_should_exit[1]) {
+    //FIXME once the second message is received, this loop stops
+    //      (hangs?)
     // Remove next message from _rx_buf to parse
     // Skip parsing if there is no message in buffer
     // Push ack if necessary
-    if ((nxt_msg_type[1] = elka_dev->remove_msg(elka_dev->_elka_rcv, 
-                                           elka_dev->_elka_ack_rcv,
+    if ((nxt_msg_type[1] = elka_dev->remove_msg(elka_dev->_elka_rcv_cmd, 
+                                           elka_dev->_elka_ack_rcv_cmd,
                                            false)) == MSG_ACK) {
       if ((parse_res = elka_dev->parse_elka_msg(
-                          elka_dev->_elka_ack_rcv))
+                          elka_dev->_elka_ack_rcv_cmd))
           == MSG_FAILED) {
         PX4_ERR("Failed message for msg id: " PRMIT "",
-            elka_dev->_elka_ack_rcv.msg_id);
+            elka_dev->_elka_ack_rcv_cmd.msg_id);
       }
     } else if (nxt_msg_type[1] != MSG_NULL) {
+
       // Parse message
-      // Send ack if the message requires one 
+      // Send ack if the message requires one
+      //  (done in parse function)
       if ((parse_res = elka_dev->parse_elka_msg(
-                          elka_dev->_elka_rcv))
+                          elka_dev->_elka_rcv_cmd))
           == MSG_FAILED) {
         PX4_ERR("Failed message for msg id: " PRMIT "",
-            elka_dev->_elka_rcv.msg_id);
-      } else if (parse_res & TYPE_EXPECTING_ACK) {
-        elka_dev->push_msg(elka_dev->_elka_ack_snd, true);
+            elka_dev->_elka_rcv_cmd.msg_id);
       }
     }
+
 
     // Transmit next message from _tx_sb
     if ( (nxt_msg_type[0] = elka_dev->get_msg(
@@ -293,15 +299,18 @@ int elka_parse_loop(int argc, char **argv) {
                               true))
          == MSG_ACK ) {
       elka_dev->send_msg(elka_dev->_elka_ack_snd);
+      elka_dev->erase_msg(elka_dev->_elka_ack_snd.msg_id,
+                          elka_dev->_elka_ack_snd.msg_num,
+                          true);
     } else if (nxt_msg_type[0] != MSG_NULL &&
                nxt_msg_type[0] != MSG_FAILED ) {
 
       elka_dev->send_msg(elka_dev->_elka_snd);
 
       if (!(elka_dev->_elka_snd.msg_id & ID_EXPECTING_ACK)) {
-        // TODO This scheme of popping only works if messages are
-        // pushed here and not in a separate thread
-        elka_dev->pop_msg(true);
+        elka_dev->erase_msg(elka_dev->_elka_snd.msg_id,
+                            elka_dev->_elka_snd.msg_num,
+                            true);
       } else {// Sleep for a short time to let ack process
         usleep(20000);
       }
@@ -319,6 +328,7 @@ int elka_parse_loop(int argc, char **argv) {
     }
     */
 
+    usleep(50000);
   }
 
   thread_running[1] = false;

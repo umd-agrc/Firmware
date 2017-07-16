@@ -33,6 +33,7 @@ struct elka::ElkaBufferMsg {
   ElkaBufferMsg(msg_id_t msg_id,
       uint16_t push_msg_num,
       uint16_t rmv_msg_num,
+      uint8_t num_retries,
       uint8_t *data);
   ~ElkaBufferMsg();
   void clear_contents();
@@ -56,7 +57,7 @@ struct elka::SerialBuffer {
   uint16_t _recent_acks_len;
 
   uint16_t _push_msg_num;
-  uint16_t _rmv_msg_num;
+  uint16_t _rmv_msg_num; // Should never be 0
   uint16_t _max_size;
 private:
   uint8_t _type;
@@ -68,6 +69,15 @@ private:
 public:
   SerialBuffer(dev_id_t port_id, uint8_t buf_type, uint16_t size);
   ~SerialBuffer();
+
+  inline uint16_t get_nxt_msg_num() {
+    _rmv_msg_num++;
+    if (_rmv_msg_num == 0) {
+      _rmv_msg_num++; 
+    }
+
+    return _rmv_msg_num;
+  }
 
   // Methods for recent_acks
   // Check if msg num has been (successfully) recently acked
@@ -105,12 +115,12 @@ public:
                   elka_msg_ack_s &elka_msg_ack);
 
   // Get pointer to vector element referenced by snd_id and msg_num
+  // If msg_num == 0 and num_retries == 0, then 
   // @param msg_id = msg_id to use to get snd_id
   // @param msg_num = if passed, get message with _rmv_msg_num
   //                  equal to msg_num
-  // @param tx = true if sending message
-  //             false if receiving message
-  // @return pointer to matching ElkaBufferMsg if element exists //         nullptr if element doesn't exist
+  // @return pointer to matching ElkaBufferMsg if element exists
+  //         nullptr if element doesn't exist
   //         Note: Return value not valid if buffer is subsequently
   //         re-ordered
   ElkaBufferMsg *get_buffer_msg(msg_id_t msg_id, uint16_t msg_num);
@@ -141,12 +151,17 @@ public:
   // Useful to determine whether message is elka_msg
   // or elka_msg_ack
   // @return msg_type
-  uint8_t buffer_front_type();
+  inline uint8_t buffer_front_type();
   
 private:
   class Compare {
   public:
+    // Lower numbers -> higher priority
     uint8_t msg_priority(uint8_t msg_type);
+    // EBM p is less than EBM q if:
+    //  p.msg_type has lower priority than q.msg_type
+    //  If p.msg_type == q.msg_type:
+    //    p._push_msg_num > q._push_msg_num
     bool operator() (ElkaBufferMsg p, ElkaBufferMsg q);
   };
 

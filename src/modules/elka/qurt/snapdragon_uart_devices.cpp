@@ -21,8 +21,10 @@ uart::UARTPort::UARTPort(uint8_t port_num, uint8_t buf_t,
   memset(&_input_rc, 0, sizeof(_input_rc));
   memset(&_elka_ack_snd, 0, sizeof(_elka_ack_snd));
   memset(&_elka_ack_rcv, 0, sizeof(_elka_ack_rcv));
+  memset(&_elka_ack_rcv_cmd, 0, sizeof(_elka_ack_rcv_cmd));
   memset(&_elka_snd, 0, sizeof(_elka_snd));
   memset(&_elka_rcv, 0, sizeof(_elka_rcv));
+  memset(&_elka_rcv_cmd, 0, sizeof(_elka_rcv_cmd));
 
   _elka_ack_pub = orb_advertise(
       ORB_ID(elka_msg_ack), &_elka_ack_snd);
@@ -37,6 +39,7 @@ uart::UARTPort::UARTPort(uint8_t port_num, uint8_t buf_t,
   _routing_table[_id].add_prop(DEV_PROP_QURT_SIDE);
   _routing_table[_id].add_prop(DEV_PROP_SENSE_LOCATION);
   _routing_table[_id].add_prop(DEV_PROP_SPIN_MOTORS);
+  _routing_table[_id].add_prop(DEV_PROP_TRANSMISSION_CTL);
 
   start_port();
   if (open() == PX4_OK) {
@@ -53,13 +56,13 @@ uart::UARTPort::UARTPort(uint8_t port_num, uint8_t buf_t,
 }
 
 uart::UARTPort::~UARTPort() {
-  delete _tx_buf;
-  delete _rx_buf;
-
   if (deinitialize() != PX4_OK) {
     PX4_ERR("Unable to deinitialize elka device with %s",
         _dev_name);
   }
+
+  delete _tx_buf;
+  delete _rx_buf;
 }
 
 // Open UART port
@@ -144,12 +147,16 @@ uint8_t uart::UARTPort::add_msg(
   } else if (target_dev) {
     target_devs.push_back(*target_dev); 
   } else {
-    std::map<dev_id_t, elka::DeviceRoute, dev_id_tCmp>::iterator
-      dev_routes = _routing_table.begin();
+    std::map<dev_id_t,
+             elka::DeviceRoute,
+             dev_id_tCmp>::iterator
+        dev_routes = _routing_table.begin();
     for (; dev_routes != _routing_table.end(); dev_routes++) {
-      if ( check_dev_compatible(msg_type,
-                               dev_routes->first) )
+      if ( cmp_dev_id_t(dev_routes->first, _id) && 
+           check_dev_compatible(msg_type,
+                               dev_routes->first) ) {
         target_devs.push_back(dev_routes->first);
+      }
     }
   }
 
@@ -169,7 +176,7 @@ uint8_t uart::UARTPort::add_msg(
 
       push_msg(elka_msg, true);
     }
-  } else {
+  } else if (msg_type != MSG_NULL) {
     elka_msg_s elka_msg;
     
     for (; curr_dev != target_devs.end(); curr_dev++) {
@@ -177,9 +184,8 @@ uint8_t uart::UARTPort::add_msg(
         _id, *curr_dev, _snd_params,
         msg_type, len);
 
-      // num_retries and msg_num not used if tx msg
-      //elka_msg.num_retries = num_retries;
-      //elka_msg.msg_num = msg_num;
+      elka_msg.num_retries = num_retries;
+      elka_msg.msg_num = msg_num;
       memcpy(elka_msg.data, data, len);
 
       push_msg(elka_msg, true);
@@ -205,6 +211,9 @@ uint8_t uart::UARTPort::set_dev_state_msg(
   set_state_msg(elka_snd,state,
       _id, dst_id,
       _snd_params, msg_t, MSG_STATE_LENGTH);
+  
+  elka_snd.msg_num = 0;
+  elka_snd.num_retries = 0;
 
   return state;
 }
@@ -280,7 +289,9 @@ uint8_t uart::UARTPort::parse_elka_msg(elka_msg_s &elka_msg) {
   // to determine correct method of parsing message.
   if (( !(in_route = check_route(msg_id.rcv_id)) &&
         !broadcast_msg(msg_id.rcv_id) ) ||
-      initial_msg(elka_msg.msg_id)) {
+      initial_msg(elka_msg.msg_id,
+                  elka_msg.msg_num,
+                  elka_msg.num_retries)) {
     return MSG_NULL;
   } else if (in_route &&
              cmp_dev_id_t(msg_id.rcv_id, _id) &&
@@ -318,6 +329,10 @@ uint8_t uart::UARTPort::parse_elka_msg(elka_msg_s &elka_msg) {
 
   // Send ack if necessary 
   if (parse_res & TYPE_EXPECTING_ACK) {
+    PX4_INFO("in parse\tmsg_num: %" PRIu16 " num_retries: %d\n\
+ack msg_num: %" PRIu16 " ack num_retries: %d",
+        elka_msg.msg_num, elka_msg.num_retries,
+        elka_ack.msg_num, elka_ack.num_retries);
     push_msg(elka_ack, true);
   }
 
@@ -378,16 +393,16 @@ uint8_t uart::UARTPort::parse_port_ctl(elka_msg_s &elka_msg,
                        elka_msg_ack_s &elka_ack,
                        struct elka_msg_id_s &msg_id) {
   uint8_t ret;
+
   get_elka_msg_id_attr(NULL, NULL, NULL, &ret, NULL,
       elka_msg.msg_id);
      
-  elka_ack.msg_num = elka_msg.msg_num;
-
   get_elka_msg_id(&elka_ack.msg_id,
       msg_id.rcv_id, msg_id.snd_id,
       msg_id.snd_params,
       MSG_ACK, MSG_ACK_LENGTH);
 
+  elka_ack.msg_num = elka_msg.msg_num;
   elka_ack.result = elka_msg_ack_s::ACK_UNSUPPORTED;
   elka_ack.num_retries = elka_msg.num_retries;
   return ret;
@@ -400,13 +415,12 @@ uint8_t uart::UARTPort::parse_elka_ctl(elka_msg_s &elka_msg,
   get_elka_msg_id_attr(NULL, NULL, NULL, &ret, NULL,
       elka_msg.msg_id);
      
-  elka_ack.msg_num = elka_msg.msg_num;
-
   get_elka_msg_id(&elka_ack.msg_id,
       msg_id.rcv_id, msg_id.snd_id,
       msg_id.snd_params,
       MSG_ACK, MSG_ACK_LENGTH);
 
+  elka_ack.msg_num = elka_msg.msg_num;
   elka_ack.result = elka_msg_ack_s::ACK_UNSUPPORTED;
   elka_ack.num_retries = elka_msg.num_retries;
 
@@ -423,7 +437,7 @@ uint8_t uart::UARTPort::check_ack(struct elka_msg_ack_s &elka_ack) {
   get_elka_msg_id_attr(&msg_id, elka_ack.msg_id);
 
   // Check that ack is meant for this device
-  if (!cmp_dev_id_t(msg_id.rcv_id, _id)) {
+  if (cmp_dev_id_t(msg_id.rcv_id, _id)) {
     return elka_msg_ack_s::ACK_NULL;
   } else {
     sb = _tx_buf;

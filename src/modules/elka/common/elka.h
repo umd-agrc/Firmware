@@ -309,14 +309,17 @@ inline bool broadcast_msg(dev_id_t &rcv_id) {
   return !cmp_dev_id_t(rcv_id,BROADCAST_MSG_ID);
 }
 
-inline bool initial_msg(msg_id_t &msg_id) {
+inline bool initial_msg(msg_id_t &msg_id,
+                        uint16_t msg_num,
+                        uint8_t num_retries) {
   dev_id_t snd_id, rcv_id;
 
   get_elka_msg_id_attr(&snd_id,&rcv_id,NULL,NULL,NULL,
       msg_id);
 
-  return !( cmp_dev_id_t(snd_id,(dev_id_t)0) || 
-            cmp_dev_id_t(rcv_id,(dev_id_t)0) );
+  return (!cmp_msg_id_t(msg_id, (msg_id_t)0) &&
+          msg_num == 0 &&
+          num_retries == 0);
 }
 
 // Check ELKA ack against known msg_id and msg_num
@@ -358,7 +361,7 @@ void serialize_elka_msg_ack(uint8_t *ret, elka_msg_ack_s &elka_ack);
 // Elka msg and Elka ack print methods
 void print_elka_msg_id(msg_id_t &msg_id);
 void print_elka_msg(elka_msg_s &elka_msg);
-void print_elka_msg_ack(elka_msg_ack_s &elka_msg);
+void print_elka_msg(elka_msg_ack_s &elka_msg);
 void print_elka_routing_msg(elka_msg_s &elka_msg);
 
 // Buffer print convenience methods

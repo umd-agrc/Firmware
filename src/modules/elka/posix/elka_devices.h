@@ -26,11 +26,15 @@ public:
 
   // elka_ack_snd is ack to be sent after parsing next cmd from rx_buf
   // elka_ack_rcv is ack received after sending msg from tx_buf
-  struct elka_msg_ack_s _elka_ack_rcv, _elka_ack_snd;
+  struct elka_msg_ack_s _elka_ack_rcv,
+                        _elka_ack_snd,
+                        _elka_ack_rcv_cmd;
   // elka_snd is msg to send from tx buf
-  // elka_ret is msg to push to rx buf
+  // elka_rcv is msg to push to rx buf
   // elka_rcv_cmd is msg to be parsed from rx buf
-  struct elka_msg_s _elka_snd, _elka_rcv;
+  struct elka_msg_s _elka_snd,
+                    _elka_rcv,
+                    _elka_rcv_cmd;
 
   orb_advert_t _elka_msg_pub;
   orb_advert_t _elka_ack_pub;
@@ -55,10 +59,12 @@ public:
    */
   bool print_statistics(bool reset);
 
-
   // Add message to buffer
   // Adds message to buffer for all applicable
   // devices unless target_dev is specified
+  // If num_retries and msg_num are set to zero, then this
+  // message's msg_num will be set to the next msg_num of 
+  // tx_buf
   // @return msg_type
   uint8_t add_msg(uint8_t msg_type,
                   uint8_t len,

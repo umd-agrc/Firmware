@@ -242,13 +242,17 @@ rcv_id: %" PRDIT "\n\tsnd_params: %d\tmsg_type: %d\tmsg_len: %d\n",
 }
 
 void print_elka_msg(elka_msg_s &elka_msg) {
-  PX4_INFO("-----ELKA msg-----");
+  PX4_INFO("-----ELKA msg-----\n\
+# %" PRIu16 ", retries: %" PRIu16 "",
+           elka_msg.msg_num, elka_msg.num_retries);
   print_elka_msg_id(elka_msg.msg_id);
   PX4_INFO("\n");
 }
 
-void print_elka_msg_ack(elka_msg_ack_s &elka_msg) {
-  PX4_INFO("-----ELKA msg ack-----");
+void print_elka_msg(elka_msg_ack_s &elka_msg) {
+  PX4_INFO("-----ELKA msg ack-----\n\
+# %" PRIu16 ", retries: %" PRIu16 "",
+           elka_msg.msg_num, elka_msg.num_retries);
   print_elka_msg_id(elka_msg.msg_id);
   PX4_INFO("\n");
 }

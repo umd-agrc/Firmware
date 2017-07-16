@@ -23,8 +23,12 @@ public:
   hrt_abstime _now; 
 
   input_rc_s _input_rc;
-  elka_msg_ack_s _elka_ack_snd, _elka_ack_rcv;
-  elka_msg_s _elka_snd, _elka_rcv;
+  elka_msg_ack_s _elka_ack_snd,
+                 _elka_ack_rcv,
+                 _elka_ack_rcv_cmd;
+  elka_msg_s _elka_snd,
+             _elka_rcv,
+             _elka_rcv_cmd;
 
   // Advertise elka msg and elka msg ack
   orb_advert_t _elka_ack_pub;
