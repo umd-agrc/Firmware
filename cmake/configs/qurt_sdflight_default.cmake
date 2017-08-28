@@ -107,6 +107,11 @@ set(config_module_list
 	# sources for muorb over fastrpc
 	#
 	modules/muorb/adsp
+
+  #
+  # AGRC stuff
+  #
+  modules/spektrum_serial_test
 	)
 
 set(config_df_driver_list
