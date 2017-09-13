@@ -3,10 +3,15 @@
 #include <stdint.h>
 
 #define MAX_NUM_SERIAL_DEVS 6
-#define MAX_MSG_LEN 256
+#define MAX_SERIAL_MSG_LEN 256
 #define SERIAL_SIZE_OF_DATA_BUFFER 128
 
-inline char get_byte_n(uint32_t num, uint8_t n) {
+// Get byte of 64b integer
+// High byte is higher number
+inline char get_byte_n(uint64_t num, uint8_t n) {
+  return (char)((num >> ((n-1)*8)) & 0xff);
+}
+inline char get_byte_n(int64_t num, uint8_t n) {
   return (char)((num >> ((n-1)*8)) & 0xff);
 }
 

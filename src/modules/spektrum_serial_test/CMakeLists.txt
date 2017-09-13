@@ -6,6 +6,7 @@ px4_add_module(
 	SRCS
 		spektrum_serial_test.cpp
 		basic_uart.cpp
+		basic_uart.h
 	DEPENDS
 		platforms__common
 	)

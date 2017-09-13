@@ -12,8 +12,8 @@
 #include "basic_uart.h"
 
 const char *spektrum_serial_path[MAX_NUM_SERIAL_DEVS] = {
-  "/dev/tty-2", "/dev/tty-1",
-  "/dev/tty-3", "/dev/tty-4",
+  "/dev/tty-4", "/dev/tty-1",
+  "/dev/tty-3", "/dev/tty-2",
   "/dev/tty-5", "/dev/tty-6"
 };
 
@@ -101,11 +101,11 @@ void spektrum_set_blocking(int fd, int should_block) {
 }
 
 void spektrum_print_array(const uint8_t *buf, uint8_t len) {
-  char to_print[7*MAX_MSG_LEN+1],
+  char to_print[7*MAX_SERIAL_MSG_LEN+1],
        a_char[7]; // 3 chars max for a uint8 number and empty space
   uint8_t i=0;
 
-  memset(to_print,0,7*MAX_MSG_LEN+1);
+  memset(to_print,0,7*MAX_SERIAL_MSG_LEN+1);
 
   while (i++ < len) {
     sprintf(a_char,"%d ",*buf++);
@@ -128,7 +128,7 @@ int spektrum_serial_open() {
 
     // Save current serial port settings
     tcgetattr(serial_fd,&spektrum_oldtio);
-		// Set baud to 115200 bps, 8n1 (no parity)
+		// Set baud to 38400 bps, 8n1 (no parity)
 		spektrum_set_interface_attribs(serial_fd,B38400,0);
 		// Set no blocking
 		spektrum_set_blocking(serial_fd, 0);
@@ -212,7 +212,6 @@ int spektrum_serial_write(int fd, const char* tx_buffer,
 
   PX4_INFO("Beginning serial write");
 
-  PX4_INFO("txbuflen: %d",tx_buf_len);
   spektrum_print_array((const uint8_t *)tx_buffer, tx_buf_len);
 
   num_bytes_written = write(fd,
