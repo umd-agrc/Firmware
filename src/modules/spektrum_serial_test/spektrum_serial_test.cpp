@@ -12,6 +12,7 @@
 #include <uORB/uORB.h>
 #include <uORB/topics/input_rc.h>
 
+#include "basic_navigator.h"
 #include "basic_uart.h"
 #include "spektrum_serial_test.h"
 
@@ -134,7 +135,7 @@ int spektrum_test_loop(int argc, char **argv) {
                            vision_pos;
   memset(&estimator_pos, 0, sizeof(estimator_pos));
   memset(&vision_pos, 0, sizeof(vision_pos));
-  math::Vector<3>prev_pos_error(
+  math::Vector<3>prev_min_pos_error(
       POSITION_ERROR_DEFAULT,
       POSITION_ERROR_DEFAULT,
       POSITION_ERROR_DEFAULT); // stores previous min position error
@@ -159,7 +160,7 @@ int spektrum_test_loop(int argc, char **argv) {
   _new_setpoint = true;
   uint8_t msg_type;
 
-  uint16_t spektrum_thrust;
+  uint16_t spektrum_thrust = 0;
 
   int error_counter = 0;
 
@@ -184,6 +185,11 @@ int spektrum_test_loop(int argc, char **argv) {
 
       if (fds[0].revents & POLLIN) { // input_rc
         orb_copy(ORB_ID(input_rc), input_rc_sub_fd, &input_rc);
+
+        // Thrust correction for ELKA
+        input_rc.values[SPEKTRUM_THRUST_CHANNEL] =
+          input_rc.values[SPEKTRUM_THRUST_CHANNEL] < RAW_THRUST_BASELINE ?
+          0 : input_rc.values[SPEKTRUM_THRUST_CHANNEL]-RAW_THRUST_BASELINE;
         spektrum_thrust = input_rc.values[SPEKTRUM_THRUST_CHANNEL];
         msg_set_serial_state(MSG_TYPE_SPEKTRUM, &input_rc);
 
@@ -225,13 +231,13 @@ int spektrum_test_loop(int argc, char **argv) {
         orb_copy(ORB_ID(vehicle_local_position),
                  estimator_pos_sub_fd,
                  &estimator_pos);
-        check_pos(&estimator_pos, &prev_pos_error, &setpoint);
+        check_pos(&estimator_pos, &prev_min_pos_error, &setpoint);
 
         if (_new_setpoint) {
           msg_type = MSG_TYPE_SETPOINT;
-          prev_pos_error(0) = POSITION_ERROR_DEFAULT;
-          prev_pos_error(1) = POSITION_ERROR_DEFAULT;
-          prev_pos_error(2) = POSITION_ERROR_DEFAULT;
+          prev_min_pos_error(0) = POSITION_ERROR_DEFAULT;
+          prev_min_pos_error(1) = POSITION_ERROR_DEFAULT;
+          prev_min_pos_error(2) = POSITION_ERROR_DEFAULT;
           setpoint(0) = estimator_pos.x;
           setpoint(1) = estimator_pos.y;
           setpoint(2) = estimator_pos.z;
@@ -272,13 +278,13 @@ int spektrum_test_loop(int argc, char **argv) {
         orb_copy(ORB_ID(vehicle_vision_position),
                  vision_pos_sub_fd,
                  &vision_pos);
-        check_pos(&vision_pos, &prev_pos_error, &setpoint);
+        check_pos(&vision_pos, &prev_min_pos_error, &setpoint);
 
         if (_new_setpoint) {
           msg_type = MSG_TYPE_SETPOINT;
-          prev_pos_error(0) = POSITION_ERROR_DEFAULT;
-          prev_pos_error(1) = POSITION_ERROR_DEFAULT;
-          prev_pos_error(2) = POSITION_ERROR_DEFAULT;
+          prev_min_pos_error(0) = POSITION_ERROR_DEFAULT;
+          prev_min_pos_error(1) = POSITION_ERROR_DEFAULT;
+          prev_min_pos_error(2) = POSITION_ERROR_DEFAULT;
           setpoint(0) = vision_pos.x;
           setpoint(1) = vision_pos.y;
           setpoint(2) = vision_pos.z;
@@ -333,7 +339,7 @@ int pack_position_estimate(char *snd_arr,
 
   // When using VISlam, x <-> y due to camera orientation
   x = (int32_t)(pos->y*10000);
-  y = (int32_t)(pos->x*10000);
+  y = -(int32_t)(pos->x*10000);
   z = (int32_t)(pos->z*10000);
 
   PX4_INFO("xf: %.6f yf: %.6f zf: %.6f",

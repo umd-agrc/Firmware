@@ -1,11 +1,7 @@
 #TODO
-##FIXME Put total msg length at front of packet!!!
+##Determine when we are sufficiently close to a setpoint 
 
-##Send thrust controller inputs with vision pose
-So that pilot can control z position
-
-##Set setpoint difference limit
-So that we can effectively attenuate signals
+##Send a series of setpoints
 
 ##Add heuristic so that vision pose sent doesn't
 ##jump suddenly

@@ -5,8 +5,10 @@ px4_add_module(
 	COMPILE_FLAGS
 	SRCS
 		spektrum_serial_test.cpp
-		basic_uart.cpp
 		basic_uart.h
+		basic_uart.cpp
+		basic_navigator.h
+		basic_navigator.cpp
 	DEPENDS
 		platforms__common
 	)

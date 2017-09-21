@@ -17,9 +17,6 @@
 #define SPEKTRUM_THRUST_CHANNEL 2
 
 #define POSITION_OFFSET UINT32_MAX/2
-// Defines close enough to setpoint position in meters
-#define POSITION_EPSILON 0.03
-#define POSITION_ERROR_DEFAULT 0.5
 
 #define SERIAL_HEADER_MSG_LEN 0
 #define SERIAL_HEADER_MSG_TYPE 1
@@ -46,6 +43,12 @@
 #define MSG_TYPE_LOCAL_POS 4
 #define MSG_TYPE_SETPOINT 5
 #define MSG_TYPE_THRUST 6
+
+#define RAW_ROLL_BASELINE 1500
+#define RAW_PITCH_BASELINE 1500
+// 916 here is minimum thrust stick value
+#define RAW_THRUST_BASELINE 916 
+#define RAW_YAW_BASELINE 1500
 
 struct gains {
   int16_t pos_kp, pos_kd;
