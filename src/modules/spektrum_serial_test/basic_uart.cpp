@@ -206,13 +206,12 @@ int spektrum_serial_read(int fd, char* rx_buffer) {
 	return fd;
 }
 
+//FIXME why must these be here and not in another header?
+//#define ELKA_DEBUG 1
+//#define DEBUG_SERIAL 1
 int spektrum_serial_write(int fd, const char* tx_buffer,
     uint8_t tx_buf_len) {
   int num_bytes_written = 0;
-
-  PX4_INFO("Beginning serial write");
-
-  spektrum_print_array((const uint8_t *)tx_buffer, tx_buf_len);
 
   num_bytes_written = write(fd,
       (const char *)tx_buffer,
@@ -220,8 +219,12 @@ int spektrum_serial_write(int fd, const char* tx_buffer,
 
   if (num_bytes_written == tx_buf_len) {
     //TODO associate with any file if necessary
+#if defined(ELKA_DEBUG) && defined(DEBUG_SERIAL_WRITE)
+    spektrum_print_array((const uint8_t *)tx_buffer, tx_buf_len);
+    PX4_INFO("Beginning serial write");
     PX4_INFO("Wrote %d bytes to %s", num_bytes_written,
         spektrum_serial_path[0]);
+#endif
   } else {
     //TODO associate with any file if necessary
     PX4_ERR("failed to write to %s", spektrum_serial_path[0]);

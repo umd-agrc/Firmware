@@ -117,35 +117,68 @@ int spektrum_test_loop(int argc, char **argv) {
   // Define poll_return for defined file descriptors
   int poll_ret;
 
-  // Subscribe to elka msg, elka msg ack, and input_rc (TODO only if necessary)
-  // Vision position omes from MAVLink SLAM pose estimate
-  // Local position comes from LPE BlockLocalPositionEstimator
-  int input_rc_sub_fd = orb_subscribe(ORB_ID(input_rc));
-  int estimator_pos_sub_fd = orb_subscribe(ORB_ID(vehicle_local_position));
-  int vision_pos_sub_fd = orb_subscribe(ORB_ID(vehicle_vision_position));
-
-  // Set update rate to 100Hz
-  orb_set_interval(input_rc_sub_fd, 10);
-  orb_set_interval(estimator_pos_sub_fd, 10);
-  orb_set_interval(vision_pos_sub_fd, 10);
-
   struct input_rc_s input_rc;
   memset(&input_rc, 0, sizeof(input_rc));
   vehicle_local_position_s estimator_pos,
                            vision_pos;
-  memset(&estimator_pos, 0, sizeof(estimator_pos));
-  memset(&vision_pos, 0, sizeof(vision_pos));
-  math::Vector<3>prev_min_pos_error(
-      POSITION_ERROR_DEFAULT,
-      POSITION_ERROR_DEFAULT,
-      POSITION_ERROR_DEFAULT); // stores previous min position error
-  math::Vector<3>setpoint(0,0,0); // stores current setpoint
+  vehicle_attitude_s estimator_att,
+                     vision_att;
 
+  memset(&estimator_pos, 0, sizeof(estimator_pos));
+  memset(&estimator_att, 0, sizeof(estimator_att));
+  memset(&vision_pos, 0, sizeof(vision_pos));
+  memset(&vision_att,0,sizeof(vision_att));
+
+  // Subscribe to elka msg, elka msg ack, and input_rc (TODO only if necessary)
+  // Vision position omes from MAVLink SLAM pose estimate
+  // Local position comes from LPE BlockLocalPositionEstimator
+  int input_rc_sub_fd = orb_subscribe(ORB_ID(input_rc));
+  int vision_pos_sub_fd = orb_subscribe(ORB_ID(vehicle_vision_position));
+  int vision_att_sub_fd = orb_subscribe(ORB_ID(vehicle_vision_attitude));
+
+// If debugging, must not be receiving pose from built-in
+// LPE, EKF, etc filters. Instead, debugging mode sends back
+// local_position_ned via MAVLink on the
+// vehicle_{attitude|local_position} channels
+#if defined(ELKA_DEBUG) && defined(DEBUG_POSE)
+  orb_advert_t local_pos_pub, local_att_pub;
+  local_pos_pub=orb_advertise(ORB_ID(vehicle_local_position),
+                              &estimator_pos);
+  local_att_pub=orb_advertise(ORB_ID(vehicle_attitude),
+                              &estimator_att);
+#else
+  int estimator_pos_sub_fd = orb_subscribe(ORB_ID(vehicle_local_position));
+  int estimator_att_sub_fd = orb_subscribe(ORB_ID(vehicle_attitude));
+  orb_set_interval(estimator_pos_sub_fd, 10);
+  orb_set_interval(estimator_att_sub_fd, 10);
+#endif
+
+  // Set update rate to 100Hz
+  orb_set_interval(input_rc_sub_fd, 10);
+  orb_set_interval(vision_pos_sub_fd, 10);
+  orb_set_interval(vision_att_sub_fd, 10);
+
+  // Create estimator
+  elka::BasicNavigator nav = elka::BasicNavigator();
+
+  uint8_t len_fds;
+#if defined(ELKA_DEBUG) && defined(DEBUG_POSE)
+  px4_pollfd_struct_t fds[] = {
+    {.fd = input_rc_sub_fd, .events = POLLIN},
+    {.fd = vision_pos_sub_fd, .events = POLLIN},
+    {.fd = vision_att_sub_fd, .events = POLLIN},
+  };
+  len_fds=3;
+#else
   px4_pollfd_struct_t fds[] = {
     {.fd = input_rc_sub_fd, .events = POLLIN},
     {.fd = estimator_pos_sub_fd, .events = POLLIN},
+    {.fd = estimator_att_sub_fd, .events = POLLIN},
     {.fd = vision_pos_sub_fd, .events = POLLIN},
+    {.fd = vision_att_sub_fd, .events = POLLIN},
   };
+  len_fds=5;
+#endif
 
   // Set old message duration to 1/10 s
   set_old_msg_duration(100000);
@@ -159,6 +192,8 @@ int spektrum_test_loop(int argc, char **argv) {
 
   _new_setpoint = true;
   uint8_t msg_type;
+
+  uint8_t using_vision=3; // So far, vision gets precedence
 
   uint16_t spektrum_thrust = 0;
 
@@ -193,14 +228,16 @@ int spektrum_test_loop(int argc, char **argv) {
         spektrum_thrust = input_rc.values[SPEKTRUM_THRUST_CHANNEL];
         msg_set_serial_state(MSG_TYPE_SPEKTRUM, &input_rc);
 
-        /*
+#if defined(ELKA_DEBUG) && defined(DEBUG_SPEKTRUM)
         PX4_INFO("channel values\n0:\t%" PRIu16 "\n1:\t%" PRIu16 "\n2:\t"
 "%" PRIu16 "\n3:\t%" PRIu16 "\n4:\t%" PRIu16 "\n5:\t%" PRIu16 "\n6:\t"
+"%" PRIu16 "\n7:\t%" PRIu16 "\n8:\t%" PRIu16 "\n9:\t%" PRIu16 "\n10:\t"
 "%" PRIu16 "",
             input_rc.values[0],input_rc.values[1],input_rc.values[2],
-            input_rc.values[3], input_rc.values[4], input_rc.values[5],
-            input_rc.values[6], input_rc.values[7]);
-            */
+            input_rc.values[3],input_rc.values[4],input_rc.values[5],
+            input_rc.values[6],input_rc.values[7],input_rc.values[8],
+            input_rc.values[9],input_rc.values[10],input_rc.values[11]);
+#endif
 
         if (_serial_state == SERIAL_STATE_KILL) {
           msg_type = MSG_TYPE_KILL;
@@ -221,103 +258,106 @@ int spektrum_test_loop(int argc, char **argv) {
             input_rc.timestamp);
           } else {
             // Must send new setpoint after successful spektrum write
-            _new_setpoint = true;
+            nav.set_new_setpoint(true);
             usleep(20000);
           }
         }
       }
 
+#ifndef ELKA_DEBUG
       if (fds[1].revents & POLLIN) { // estimator_pos 
         orb_copy(ORB_ID(vehicle_local_position),
                  estimator_pos_sub_fd,
                  &estimator_pos);
-        check_pos(&estimator_pos, &prev_min_pos_error, &setpoint);
-
-        if (_new_setpoint) {
-          msg_type = MSG_TYPE_SETPOINT;
-          prev_min_pos_error(0) = POSITION_ERROR_DEFAULT;
-          prev_min_pos_error(1) = POSITION_ERROR_DEFAULT;
-          prev_min_pos_error(2) = POSITION_ERROR_DEFAULT;
-          setpoint(0) = estimator_pos.x;
-          setpoint(1) = estimator_pos.y;
-          setpoint(2) = estimator_pos.z;
-        } else
-          msg_type = MSG_TYPE_LOCAL_POS;
-
-        msg_set_serial_state(msg_type, &estimator_pos);
-
-        if (check_state(msg_type) &&
-            (pack_position_estimate(snd_arr,
-                                    msg_type,
-                                    &estimator_pos))
-             != PX4_ERROR) {
-          // Add on spektrum thrust to serial message
-          if (append_serial_msg(snd_arr,
-                                MSG_TYPE_THRUST,
-                                spektrum_thrust,
-                                sizeof(spektrum_thrust)) ==
-              PX4_ERROR) {
-            PX4_WARN("Could not append to serial message.");
-          }
-          snd_arr_len = *snd_arr;
-          if (spektrum_serial_write(spektrum_fd,
-                                    snd_arr, snd_arr_len) !=
-              spektrum_fd) {
-            PX4_WARN("Spektrum serial write failed for msg with timestamp: \
-%" PRIu64 "",
-                estimator_pos.timestamp);
-          } else {
-            // Don't send new setpoint after successful setpoint write
-            _new_setpoint = false;
-            usleep(20000);
-          }
-        }
+        using_vision&=2; // Bitmask 0 as first bit
       }
-
-      if (fds[2].revents & POLLIN) { // vision_pos 
+      if (fds[2].revents & POLLIN) { // estimator_att
+        orb_copy(ORB_ID(vehicle_attitude),
+                 estimator_att_sub_fd,
+                 &estimator_att);
+        using_vision&=1; // Bitmask 0 as second bit
+      }
+#endif
+      if (fds[len_fds-2].revents & POLLIN) { // vision_pos 
         orb_copy(ORB_ID(vehicle_vision_position),
                  vision_pos_sub_fd,
                  &vision_pos);
-        check_pos(&vision_pos, &prev_min_pos_error, &setpoint);
+        using_vision|=1; // Bitmask 1 as first bit
+      }
+      if (fds[len_fds-1].revents & POLLIN) { // vision_att 
+        orb_copy(ORB_ID(vehicle_vision_attitude),
+                 vision_att_sub_fd,
+                 &vision_att);
+        using_vision|=2; // Bitmask 1 as second bit
+      }
 
-        if (_new_setpoint) {
-          msg_type = MSG_TYPE_SETPOINT;
-          prev_min_pos_error(0) = POSITION_ERROR_DEFAULT;
-          prev_min_pos_error(1) = POSITION_ERROR_DEFAULT;
-          prev_min_pos_error(2) = POSITION_ERROR_DEFAULT;
-          setpoint(0) = vision_pos.x;
-          setpoint(1) = vision_pos.y;
-          setpoint(2) = vision_pos.z;
-        } else
-          msg_type = MSG_TYPE_VISION_POS;
+      if (using_vision & 3) { // vision_att and vision_pos
+        nav.update_pose(&vision_pos,&vision_att);
+      } else if (using_vision & 2) { // vision_att and estimator_pos
+        nav.update_pose(&estimator_pos,&vision_att);
+      } else if (using_vision & 1) { // estimator_att and vision_pos
+        nav.update_pose(&vision_pos,&estimator_att);
+      } else { // estimator_att and estimator_pos
+        nav.update_pose(&estimator_pos,&estimator_att);
+      }
 
-        msg_set_serial_state(msg_type, &vision_pos);
-        if (check_state(msg_type) &&
-            (pack_position_estimate(snd_arr,
-                                                  msg_type,
-                                                  &vision_pos))
-             != PX4_ERROR) {
-          // Add on spektrum thrust to serial message
-          if (append_serial_msg(snd_arr,
-                                MSG_TYPE_THRUST,
-                                spektrum_thrust,
-                                sizeof(spektrum_thrust)) ==
-              PX4_ERROR) {
-            PX4_WARN("Could not append to serial message.");
-          }
+#if defined(ELKA_DEBUG) && defined(DEBUG_POSE)
+      nav.copy_pose_error(&estimator_pos,
+                          &estimator_att);
+      orb_publish(ORB_ID(vehicle_local_position),
+                  local_pos_pub,
+                  &estimator_pos);
+      orb_publish(ORB_ID(vehicle_attitude),
+                  local_att_pub,
+                  &estimator_att); 
 
-          snd_arr_len = *snd_arr+1;
-          if (spektrum_serial_write(spektrum_fd,
-                                    snd_arr, snd_arr_len) !=
-              spektrum_fd) {
-            PX4_WARN("Spektrum serial write failed for msg with timestamp: \
+      static math::Vector<3> pos,ang,vel;
+      pos=nav.get_pose()->get_body(SECT_POS);
+      vel=nav.get_pose()->get_body(SECT_VEL);
+      ang=nav.get_pose()->get_body(SECT_ANG);
+      PX4_INFO("loc_x: %f, loc_y: %f,\
+loc_vx: %f, loc_vy: %f, loc_yaw: %f",
+               pos(0),pos(1),
+               vel(0),vel(1),
+               ang(2));
+#endif
+
+      if (nav.check_setpoint())
+        msg_type = MSG_TYPE_SETPOINT;
+      else if (!using_vision)
+        msg_type = MSG_TYPE_LOCAL_POS;
+      else
+        msg_type = MSG_TYPE_VISION_POS;
+
+      //FIXME should pos and att should align with using_vision specs
+      msg_set_serial_state(msg_type,
+                           &vision_pos,
+                           &vision_att);
+      if (check_state(msg_type) &&
+          (pack_position_estimate(snd_arr,
+                                  msg_type,
+                                  nav.get_err())
+           != PX4_ERROR)) {
+        // Add on spektrum thrust to serial message
+        if (append_serial_msg(snd_arr,
+                              MSG_TYPE_THRUST,
+                              spektrum_thrust,
+                              sizeof(spektrum_thrust)) ==
+            PX4_ERROR) {
+          PX4_WARN("Could not append to serial message.");
+        }
+        snd_arr_len = *snd_arr+1;
+
+        if (spektrum_serial_write(spektrum_fd,
+                                  snd_arr, snd_arr_len) !=
+            spektrum_fd) {
+          PX4_WARN("Spektrum serial write failed for msg with timestamp: \
 %" PRIu64 "",
-                vision_pos.timestamp);
-          } else {
-            // Don't send new setpoint after successful setpoint write
-            _new_setpoint = false;
-            usleep(20000);
-          }
+              vision_pos.timestamp);
+        } else {
+          // Don't send new setpoint after successful setpoint write
+          nav.set_new_setpoint(false);
+          usleep(20000);
         }
       }
     }
@@ -332,31 +372,42 @@ int spektrum_test_loop(int argc, char **argv) {
 
 int pack_position_estimate(char *snd_arr,
                            uint8_t pos_type,
-                           vehicle_local_position_s *pos) {
+                           pose_stamped_s *curr_err) {
   int num_bytes = 0;
-  int32_t x,y,z;
+  int32_t xe,ye,ze=0,vxe,vye,vze=0;
   bool continue_packing = true;
 
-  // When using VISlam, x <-> y due to camera orientation
-  x = (int32_t)(pos->y*10000);
-  y = -(int32_t)(pos->x*10000);
-  z = (int32_t)(pos->z*10000);
+  static math::Vector<3> pos_e;
+  static math::Vector<3> vel_e;
 
-  PX4_INFO("xf: %.6f yf: %.6f zf: %.6f",
-           pos->x,pos->y,pos->z);
-  PX4_INFO("x: %" PRIi32 " y: %" PRIi32 " z: %" PRIi32 "",
-           x,y,z);
+  pos_e=curr_err->get_body(SECT_POS);
+  vel_e=curr_err->get_body(SECT_VEL);
+
+  // Sending body frame error
+  xe = (int32_t)(pos_e(1)*10000);
+  ye = (int32_t)(-pos_e(0)*10000);
+  ze = (int32_t)(pos_e(2)*10000);
+  vxe = (int32_t)(vel_e(1)*10000);
+  vye = (int32_t)(-vel_e(0)*10000);
+  vze = (int32_t)(vel_e(2)*10000);
+
+#if defined(ELKA_DEBUG) && defined(DEBUG_SERIAL)
+  PX4_INFO("xe: %" PRIi32 " ye: %" PRIi32 " ze: %" PRIi32 "\n\
+vxe: %" PRIi32 " vye: %" PRIi32 " vze: %" PRIi32 "",
+    xe,ye,ze,
+    vxe,vye,vze);
+#endif
 
   while (num_bytes < MAX_SERIAL_MSG_LEN &&
          continue_packing) {
-    if (num_bytes < 1 &&
+    if (num_bytes < 2 &&
         (MAX_SERIAL_MSG_LEN - num_bytes >= 1)) {
       // Pack length:
-      *snd_arr = 16;
+      *snd_arr = 20;
       snd_arr++; num_bytes++;
-      *snd_arr = 15;
+      *snd_arr = 19;
       snd_arr++; num_bytes++;
-    } else if (num_bytes < 4 &&
+    } else if (num_bytes < 5 &&
         (MAX_SERIAL_MSG_LEN - num_bytes >= 3)) {
       // Pack header defined as follows:
       // state, 255, 255
@@ -367,34 +418,65 @@ int pack_position_estimate(char *snd_arr,
       snd_arr++; num_bytes++;
       *snd_arr = 255;
       snd_arr++; num_bytes++;
-    } else if (num_bytes < 15 &&
+    } else if (num_bytes < 21 &&
         (MAX_SERIAL_MSG_LEN - num_bytes >= 12)) {
-      *snd_arr = get_byte_n((int64_t)x,4);
+      *snd_arr = get_byte_n((int64_t)xe,4);
       snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)x,3);
+      *snd_arr = get_byte_n((int64_t)xe,3);
       snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)x,2);
+      *snd_arr = get_byte_n((int64_t)xe,2);
       snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)x,1);
-      snd_arr++; num_bytes++;
-
-      *snd_arr = get_byte_n((int64_t)y,4);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)y,3);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)y,2);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)y,1);
+      *snd_arr = get_byte_n((int64_t)xe,1);
       snd_arr++; num_bytes++;
 
-      *snd_arr = get_byte_n((int64_t)z,4);
+      *snd_arr = get_byte_n((int64_t)ye,4);
       snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)z,3);
+      *snd_arr = get_byte_n((int64_t)ye,3);
       snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)z,2);
+      *snd_arr = get_byte_n((int64_t)ye,2);
       snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)z,1);
+      *snd_arr = get_byte_n((int64_t)ye,1);
       snd_arr++; num_bytes++;
+
+      /*
+      *snd_arr = get_byte_n((int64_t)ze,4);
+      snd_arr++; num_bytes++;
+      *snd_arr = get_byte_n((int64_t)ze,3);
+      snd_arr++; num_bytes++;
+      *snd_arr = get_byte_n((int64_t)ze,2);
+      snd_arr++; num_bytes++;
+      *snd_arr = get_byte_n((int64_t)ze,1);
+      snd_arr++; num_bytes++;
+      */
+
+      *snd_arr = get_byte_n((int64_t)vxe,4);
+      snd_arr++; num_bytes++;
+      *snd_arr = get_byte_n((int64_t)vxe,3);
+      snd_arr++; num_bytes++;
+      *snd_arr = get_byte_n((int64_t)vxe,2);
+      snd_arr++; num_bytes++;
+      *snd_arr = get_byte_n((int64_t)vxe,1);
+      snd_arr++; num_bytes++;
+
+      *snd_arr = get_byte_n((int64_t)vye,4);
+      snd_arr++; num_bytes++;
+      *snd_arr = get_byte_n((int64_t)vye,3);
+      snd_arr++; num_bytes++;
+      *snd_arr = get_byte_n((int64_t)vye,2);
+      snd_arr++; num_bytes++;
+      *snd_arr = get_byte_n((int64_t)vye,1);
+      snd_arr++; num_bytes++;
+      
+      /*
+      *snd_arr = get_byte_n((int64_t)vze,4);
+      snd_arr++; num_bytes++;
+      *snd_arr = get_byte_n((int64_t)vze,3);
+      snd_arr++; num_bytes++;
+      *snd_arr = get_byte_n((int64_t)vze,2);
+      snd_arr++; num_bytes++;
+      *snd_arr = get_byte_n((int64_t)vze,1);
+      snd_arr++; num_bytes++;
+      */
 
       continue_packing = false;
     }
@@ -424,6 +506,25 @@ int pack_position_estimate(char *snd_arr,
   return num_bytes;
 }
 
+int pack_position_estimate(char *snd_arr,
+                           uint8_t pos_type, 
+                           pose_stamped_s *curr_err,
+                           uint16_t thrust) {
+  int num_bytes = pack_position_estimate(snd_arr,pos_type,curr_err);
+  if (num_bytes + 2 < MAX_SERIAL_MSG_LEN) {
+    *snd_arr += 2;
+    *(snd_arr+1) += 2;
+    *(snd_arr+num_bytes) = get_byte_n((uint64_t)thrust,2);
+    *(snd_arr+num_bytes+1) = get_byte_n((uint64_t)thrust,1);
+    //*(snd_arr+num_bytes) = 0;
+    //*(snd_arr+num_bytes+1) = 1;
+    num_bytes+=2;
+    return num_bytes;
+  } else {
+    return PX4_ERROR;
+  }
+}
+
 int pack_spektrum_cmd(char *snd_arr,
                       uint8_t msg_type,
                       input_rc_s *input_rc) {
@@ -441,15 +542,14 @@ int pack_kill_msg(char *snd_arr, input_rc_s *input_rc) {
 
   while (num_bytes < MAX_SERIAL_MSG_LEN &&
          continue_packing) {
-    if (num_bytes < 1 &&
+    if (num_bytes < 2 &&
           (MAX_SERIAL_MSG_LEN - num_bytes >= 1)) {
         // Pack length:
-        *snd_arr = 4;
+        *snd_arr = 12;
         snd_arr++; num_bytes++;
-        *snd_arr = 3;
+        *snd_arr = 11;
         snd_arr++; num_bytes++;
-      }
-      else if (num_bytes < 4 &&
+    } else if (num_bytes < 5 &&
           (MAX_SERIAL_MSG_LEN - num_bytes >= 4)) {
         *snd_arr = MSG_TYPE_KILL;
         snd_arr++; num_bytes++;
@@ -457,6 +557,20 @@ int pack_kill_msg(char *snd_arr, input_rc_s *input_rc) {
         snd_arr++; num_bytes++;
         *snd_arr = 255;
         snd_arr++; num_bytes++;
+
+    } else if ((num_bytes < 9 +
+                            2*NUM_JOYSTICK_CHANNELS) &&
+      (MAX_SERIAL_MSG_LEN - num_bytes >= 2*NUM_JOYSTICK_CHANNELS)) {
+      // up to 36B channel pwms ranging from 1000-2000
+      for (uint8_t i=0; i < NUM_JOYSTICK_CHANNELS; i++){
+        *snd_arr = (input_rc->values[i] >> 8) & 0xff;
+        snd_arr++; num_bytes++;
+        *snd_arr = input_rc->values[i] & 0xff;
+        snd_arr++; num_bytes++;
+        PX4_INFO("channel %d value: %d", i, input_rc->values[i]);
+        //PX4_INFO("next byte: %du",
+        //    (*(snd_arr-1) << 8) | (*(snd_arr-2)));
+      }
 
       continue_packing = false;
     } else {
@@ -476,14 +590,14 @@ int pack_input_rc_joysticks(char *snd_arr, input_rc_s *spektrum) {
   while (num_bytes < MAX_SERIAL_MSG_LEN &&
          continue_packing) {
 
-    if (num_bytes < 1 &&
+    if (num_bytes < 2 &&
         (MAX_SERIAL_MSG_LEN - num_bytes >= 1)) {
       // Pack length:
       *snd_arr = 12;
       snd_arr++; num_bytes++;
       *snd_arr = 11;
       snd_arr++; num_bytes++;
-    } else if (num_bytes < 4 &&
+    } else if (num_bytes < 5 &&
         (MAX_SERIAL_MSG_LEN - num_bytes >= 4)) {
       // Pack header defined as follows:
       //   msg type, 255, 255 
@@ -493,7 +607,7 @@ int pack_input_rc_joysticks(char *snd_arr, input_rc_s *spektrum) {
       snd_arr++; num_bytes++;
       *snd_arr = 255;
       snd_arr++; num_bytes++;
-    } else if ((num_bytes < 4+
+    } else if ((num_bytes < 5+
                             2*NUM_JOYSTICK_CHANNELS) &&
         (MAX_SERIAL_MSG_LEN - num_bytes >= 2*NUM_JOYSTICK_CHANNELS)) {
       // up to 36B channel pwms ranging from 1000-2000
@@ -502,6 +616,7 @@ int pack_input_rc_joysticks(char *snd_arr, input_rc_s *spektrum) {
         snd_arr++; num_bytes++;
         *snd_arr = spektrum->values[i] & 0xff;
         snd_arr++; num_bytes++;
+        PX4_INFO("channel %d value: %d", i, spektrum->values[i]);
         //PX4_INFO("next byte: %du",
         //    (*(snd_arr-1) << 8) | (*(snd_arr-2)));
       }
@@ -516,126 +631,6 @@ int pack_input_rc_joysticks(char *snd_arr, input_rc_s *spektrum) {
 
   return num_bytes;
 }
-
-/*
-// Multi-byte elements are packed LSB first
-int pack_input_rc(char *snd_arr, input_rc_s spektrum) {
-  int num_bytes = 1;
-  bool continue_packing = true;
-
-  while (num_bytes < MAX_SERIAL_MSG_LEN &&
-         continue_packing) {
-    // Pack header defined as follows:
-    //    0, 255, 0, 255
-    if (num_bytes < 4 &&
-        (MAX_SERIAL_MSG_LEN - num_bytes >= 4)) {
-      *snd_arr = 255;
-      snd_arr++; num_bytes++;
-      *snd_arr = 0;
-      snd_arr++; num_bytes++;
-      *snd_arr = 255;
-      snd_arr++; num_bytes++;
-      *snd_arr = 0;
-      snd_arr++; num_bytes++;
-    } else if (num_bytes < 12 &&
-        (MAX_SERIAL_MSG_LEN - num_bytes >= 8)) {
-      // Pack timestamp by splitting into 8 bytes
-      *snd_arr = spektrum.timestamp_last_signal & 0xff; 
-      snd_arr++; num_bytes++;
-      *snd_arr = (spektrum.timestamp_last_signal >> 8) & 0xff; 
-      snd_arr++; num_bytes++;
-      *snd_arr = (spektrum.timestamp_last_signal >> 16) & 0xff; 
-      snd_arr++; num_bytes++;
-      *snd_arr = (spektrum.timestamp_last_signal >> 24) & 0xff; 
-      snd_arr++; num_bytes++;
-      *snd_arr = (spektrum.timestamp_last_signal >> 32) & 0xff; 
-      snd_arr++; num_bytes++;
-      *snd_arr = (spektrum.timestamp_last_signal >> 40) & 0xff; 
-      snd_arr++; num_bytes++;
-      *snd_arr = (spektrum.timestamp_last_signal >> 48) & 0xff; 
-      snd_arr++; num_bytes++;
-      *snd_arr = (spektrum.timestamp_last_signal >> 56) & 0xff; 
-      snd_arr++; num_bytes++;
-    } else if (num_bytes < 16 &&
-          (MAX_SERIAL_MSG_LEN - num_bytes >= 4)) {
-      // 4B channel count
-      *snd_arr = spektrum.channel_count & 0xff; 
-      snd_arr++; num_bytes++;
-      *snd_arr = (spektrum.channel_count >> 8) & 0xff; 
-      snd_arr++; num_bytes++;
-      *snd_arr = (spektrum.channel_count >> 16) & 0xff; 
-      snd_arr++; num_bytes++;
-      *snd_arr = (spektrum.channel_count >> 24) & 0xff; 
-      snd_arr++; num_bytes++;
-    } else if (num_bytes < 20 &&
-        (MAX_SERIAL_MSG_LEN - num_bytes >= 4)) {
-      // 4B receive signal strength indicator (RSSI)
-      *snd_arr = spektrum.rssi & 0xff; 
-      snd_arr++; num_bytes++;
-      *snd_arr = (spektrum.rssi >> 8) & 0xff; 
-      snd_arr++; num_bytes++;
-      *snd_arr = (spektrum.rssi >> 16) & 0xff; 
-      snd_arr++; num_bytes++;
-      *snd_arr = (spektrum.rssi >> 24) & 0xff; 
-      snd_arr++; num_bytes++;
-    } else if (num_bytes < 21 &&
-      // 2B rc_failsafe
-        (MAX_SERIAL_MSG_LEN - num_bytes >= 1)) {
-      *snd_arr = spektrum.rc_failsafe & 0xff;
-      snd_arr++; num_bytes++;
-    } else if (num_bytes < 22 &&
-        (MAX_SERIAL_MSG_LEN - num_bytes >= 1)) {
-      // 2B rc lost this frame
-      *snd_arr = spektrum.rc_lost & 0xff;
-      snd_arr++; num_bytes++;
-    } else if (num_bytes < 24 &&
-        (MAX_SERIAL_MSG_LEN - num_bytes >= 2)) {
-      // 2B rc lost frame count
-      *snd_arr = spektrum.rc_lost_frame_count & 0xff;
-      snd_arr++; num_bytes++;
-      *snd_arr = (spektrum.rc_lost_frame_count >> 8) & 0xff;
-      snd_arr++; num_bytes++;
-    } else if (num_bytes < 26 &&
-        (MAX_SERIAL_MSG_LEN - num_bytes >= 2)) {
-      // 2B rc total frame count
-      *snd_arr = spektrum.rc_total_frame_count & 0xff;
-      snd_arr++; num_bytes++;
-      *snd_arr = (spektrum.rc_total_frame_count >> 8) & 0xff;
-      snd_arr++; num_bytes++;
-    } else if (num_bytes < 28 &&
-        (MAX_SERIAL_MSG_LEN - num_bytes >= 2)) {
-      // 2B rc ppm frame length
-      *snd_arr = spektrum.rc_ppm_frame_length & 0xff;
-      snd_arr++; num_bytes++;
-      *snd_arr = (spektrum.rc_ppm_frame_length >> 8) & 0xff;
-      snd_arr++; num_bytes++;
-    } else if (num_bytes < 29 &&
-        (MAX_SERIAL_MSG_LEN - num_bytes >= 2)) {
-      // 1B input sources
-      *snd_arr = spektrum.input_source;
-      snd_arr++; num_bytes++;
-    } else if (num_bytes < 29+2*spektrum.channel_count &&
-        (MAX_SERIAL_MSG_LEN - num_bytes >= 2*spektrum.channel_count)) {
-      // up to 36B channel pwms ranging from 1000-2000
-      for (int i=0; i < spektrum.channel_count; i++){
-        *snd_arr = spektrum.values[i] & 0xff;
-        snd_arr++; num_bytes++;
-        *snd_arr = (spektrum.values[i] >> 8) & 0xff;
-        snd_arr++; num_bytes++;
-        //PX4_INFO("next byte: %du",
-        //    (*(snd_arr-1) << 8) | (*(snd_arr-2)));
-      }
-      continue_packing = false;
-    } else {
-      PX4_ERR("input_rc could not be packed. Message too long.");
-      continue_packing = false;
-      return PX4_ERROR;
-    }
-  }
-
-  return num_bytes;
-}
-*/
 
 void write_serial_header(
     char *snd_arr,
@@ -706,8 +701,10 @@ void msg_set_serial_state(int msg_type, input_rc_s *input_rc) {
   }
 }
 
-void msg_set_serial_state(int msg_type, vehicle_local_position_s *pos) {
-  if (!old_msg(pos->timestamp)) {
+void msg_set_serial_state(int msg_type,
+                          vehicle_local_position_s *pos,
+                          vehicle_attitude_s *att) {
+  if (!(old_msg(pos->timestamp) || old_msg(att->timestamp))) {
     if (_serial_state != SERIAL_STATE_KILL &&
         _serial_state != SERIAL_STATE_SPEKTRUM) {
       if (msg_type == MSG_TYPE_LOCAL_POS) {
@@ -748,25 +745,6 @@ inline bool old_msg(hrt_abstime msg_time) {
 
 void set_old_msg_duration(hrt_abstime time) {
   _old_msg_duration = time;
-}
-
-void check_pos(
-    vehicle_local_position_s *curr_pos,
-    math::Vector<3>*prev_min_pos_error,
-    math::Vector<3>*setpoint) {
-  math::Vector<3>curr_pos_error(
-      curr_pos->x-(*setpoint)(0),
-      curr_pos->y-(*setpoint)(1),
-      curr_pos->z-(*setpoint)(2));
-  float norm_curr_pos_error = curr_pos_error*curr_pos_error,
-        norm_prev_min_pos_error =
-          (*prev_min_pos_error)*(*prev_min_pos_error);
-  if (norm_curr_pos_error >
-      5*norm_prev_min_pos_error &&
-      norm_curr_pos_error > POSITION_EPSILON) {
-    _new_setpoint = true;
-  } else if (norm_curr_pos_error < norm_prev_min_pos_error)
-    *prev_min_pos_error = curr_pos_error;
 }
 
 /*

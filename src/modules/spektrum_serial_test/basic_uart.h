@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#include "serial_defines.h"
+
 #define MAX_NUM_SERIAL_DEVS 6
 #define MAX_SERIAL_MSG_LEN 256
 #define SERIAL_SIZE_OF_DATA_BUFFER 128
