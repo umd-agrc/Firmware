@@ -86,6 +86,11 @@ float elka::BasicNavigator::get_setpoint(uint8_t n){
     return _setpoint.pose(n);
 }
 
+void elka::BasicNavigator::set_prev_inert_sens(
+    sensor_combined_s *s) {
+  _set.set_prev_inert_sensors(s);
+}
+
 void elka::BasicNavigator::set_pose(hrt_abstime t,
                                     math::Vector<STATE_LEN>*v) {
   _est.set_pose(t,v);  
@@ -236,21 +241,7 @@ void elka::BasicNavigator::update_pose(vehicle_local_position_s *p,
     PX4_INFO("curr_err: %3.3f,%3.3f,%3.3f",
            _curr_err.pose(0),_curr_err.pose(1),_curr_err.pose(2));
 #endif
-
-  // Update prev sensor/SLAM reading
-  _prev_sens.set_pose(0,t_p,x);
-  _prev_sens.set_pose(1,t_p,y);
-  _prev_sens.set_pose(2,t_p,z);
-  _prev_sens.set_pose(3,t_p,vx);
-  _prev_sens.set_pose(4,t_p,vy);
-  _prev_sens.set_pose(5,t_p,vz);
-  _prev_sens.set_pose(6,t_a,*q);
-  _prev_sens.set_pose(7,t_a,*(q+1));
-  _prev_sens.set_pose(8,t_a,*(q+2));
-  _prev_sens.set_pose(9,t_a,*(q+3));
-  _prev_sens.set_pose(10,t_a,rs);
-  _prev_sens.set_pose(11,t_a,ps);
-  _prev_sens.set_pose(12,t_a,ys);
+  _est.ekf();
 }
 
 void elka::BasicNavigator::reset_setpoint() {

@@ -17,6 +17,25 @@ namespace elka {
 }
 
 #define STATE_LEN 13
+#define STATE_LEN_EKF 15
+#define STATE_LEN_EKF_ODOM 9 
+#define STATE_LEN_EKF_BIAS 6 
+
+#define EKF_STATE_P1 0
+#define EKF_STATE_P2 1
+#define EKF_STATE_P3 2
+#define EKF_STATE_Q1 3
+#define EKF_STATE_Q2 4
+#define EKF_STATE_Q3 5
+#define EKF_STATE_PD1 6
+#define EKF_STATE_PD2 7
+#define EKF_STATE_PD3 8
+#define EKF_STATE_BG1 9
+#define EKF_STATE_BG2 10
+#define EKF_STATE_BG3 11
+#define EKF_STATE_AG1 12
+#define EKF_STATE_AG2 13
+#define EKF_STATE_AG3 14
 
 #define SECT_POS 0
 #define SECT_VEL 1
@@ -32,6 +51,81 @@ namespace elka {
 #define DT_MIN 0.02f
 
 #define BAD_NUM(x) (isnan(abs(x)) || isinf(abs(x)))
+
+struct sensor_stamped_s {
+  uint8_t type;
+  hrt_abstime ts; // timestamp
+  math::Vector<3> dat; // data
+  math::Vector<3> bias; // bias
+  math::Vector<3> noise; // sensor
+  //TODO add noise models as array of
+  //     function pointers
+  math::Vector<3> offset_t;
+  math::Matrix<3,3> offset_r;
+
+  sensor_stamped_s() {
+  }
+
+  sensor_stamped_s(hrt_abstime t, float[3] d,
+                   math::Vector<3> trans,
+                   math::Matrix<3,3> rot,
+                   uint8_t sens_type) {
+    type=sens_type;
+    ts=t;
+    offset_t=trans;
+    offset_r=rot;
+    dat(0)=d[0];
+    dat(1)=d[1];
+    dat(2)=d[2];
+    convert_frame();
+  }
+
+  void set_type(uint8_t sens_type); {
+    type=sens_type;
+  }
+
+  //TODO use noise models (usually gwn)
+  void update_bias() {
+
+  }
+
+  void set_offset(math::Vector<3> t, math::Matrix<3,3> r) {
+    offset_t = t;
+    offset_r = r;
+  }
+
+  //TODO convert data received into correct reference frame
+  //     using offset_t and offset_r
+  void convert_frame() {
+
+  }
+
+  void set_data(hrt_abstime t,float[3] s) {
+    ts=t;
+    update_bias();
+    dat(0) = s[0];
+    dat(1) = s[1];
+    dat(2) = s[2];
+    convert_frame();
+  }
+
+  void set_data(hrt_abstime t,math::Vector<3> s) {
+    ts=t;
+    update_bias();
+    dat(0) = s(0);
+    dat(1) = s(1);
+    dat(2) = s(2);
+    convert_frame();
+  }
+
+  const math::Vector<3> *get_data() {
+    return &dat;
+  }
+
+  const math::Vector<3> *get_bias() {
+    return &bias;
+  }
+}
 
 struct pose_stamped_s {
   hrt_abstime t[STATE_LEN];
@@ -163,6 +257,10 @@ struct pose_stamped_s {
 
 class elka::BasicEstimator {
 private:
+  sensor_stamped_s _prev_acc;
+  sensor_stamped_s _prev_gyro;
+  sensor_stamped_s _prev_cam;
+
   pose_stamped_s _curr_pose;
   pose_stamped_s _prev_pose;
   pose_stamped_s _prev_filt_pose;
@@ -171,6 +269,7 @@ public:
   BasicEstimator();
   ~BasicEstimator();
 
+  void set_prev_inert_sens(sensor_combined_s *s);
   pose_stamped_s *get_pose();
   float get_pose(uint8_t n);
   void set_pose(hrt_abstime t,math::Vector<STATE_LEN>*v);
@@ -188,6 +287,7 @@ public:
    *      Lower alpha  -> lower phase lag, estimates mirror raw data
    */
   void low_pass_filt(uint8_t *filter_states);
+  void ekf();
 };
 
 #endif

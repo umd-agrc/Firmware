@@ -9,12 +9,13 @@
 #include <uORB/topics/input_rc.h>
 #include <uORB/topics/vehicle_local_position.h>
 #include <uORB/topics/vehicle_attitude.h>
+#include <uORB/topics/sensor_combined.h>
 
 #include "serial_defines.h"
 #include "basic_navigator.h"
 
-struct gains {
-  int16_t pos_kp, pos_kd;
+struct gains_s {
+  float kp, kd;
 };
 
 void usage();

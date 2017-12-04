@@ -28,7 +28,7 @@ int _serial_state;
 hrt_abstime _prev_spektrum_update, _old_msg_duration;
 struct hrt_call	_serial_state_call;
 static int _serial_state_call_interval;
-gains_s _gains;
+gains_s _gains[3];
 bool _new_setpoint;
 
 void usage() {
@@ -123,11 +123,13 @@ int spektrum_test_loop(int argc, char **argv) {
                            vision_pos;
   vehicle_attitude_s estimator_att,
                      vision_att;
+  sensor_combined_s sensors;
 
   memset(&estimator_pos, 0, sizeof(estimator_pos));
   memset(&estimator_att, 0, sizeof(estimator_att));
   memset(&vision_pos, 0, sizeof(vision_pos));
   memset(&vision_att,0,sizeof(vision_att));
+  memset(&sensors,0,sizeof(sensors));
 
   // Subscribe to elka msg, elka msg ack, and input_rc (TODO only if necessary)
   // Vision position omes from MAVLink SLAM pose estimate
@@ -135,6 +137,7 @@ int spektrum_test_loop(int argc, char **argv) {
   int input_rc_sub_fd = orb_subscribe(ORB_ID(input_rc));
   int vision_pos_sub_fd = orb_subscribe(ORB_ID(vehicle_vision_position));
   int vision_att_sub_fd = orb_subscribe(ORB_ID(vehicle_vision_attitude));
+  int sensors_sub_fd = orb_subscribe(ORB_ID(sensor_combined));
 
 // If debugging, must not be receiving pose from built-in
 // LPE, EKF, etc filters. Instead, debugging mode sends back
@@ -157,11 +160,14 @@ int spektrum_test_loop(int argc, char **argv) {
   orb_set_interval(input_rc_sub_fd, 10);
   orb_set_interval(vision_pos_sub_fd, 10);
   orb_set_interval(vision_att_sub_fd, 10);
+  orb_set_interval(sensor_sub_fd, 10);
 
   // Create estimator
   elka::BasicNavigator nav = elka::BasicNavigator();
 
   uint8_t len_fds;
+  //FIXME sloppy but rn must define pos/att subs at the
+  //end of the px4_pollfd_struct_t array
 #if defined(ELKA_DEBUG) && defined(DEBUG_POSE)
   px4_pollfd_struct_t fds[] = {
     {.fd = input_rc_sub_fd, .events = POLLIN},
@@ -172,12 +178,13 @@ int spektrum_test_loop(int argc, char **argv) {
 #else
   px4_pollfd_struct_t fds[] = {
     {.fd = input_rc_sub_fd, .events = POLLIN},
+    {.fd = sensor_sub_fd, .events = POLLIN}
     {.fd = estimator_pos_sub_fd, .events = POLLIN},
     {.fd = estimator_att_sub_fd, .events = POLLIN},
     {.fd = vision_pos_sub_fd, .events = POLLIN},
     {.fd = vision_att_sub_fd, .events = POLLIN},
   };
-  len_fds=5;
+  len_fds=6;
 #endif
 
   // Set old message duration to 1/10 s
@@ -264,14 +271,22 @@ int spektrum_test_loop(int argc, char **argv) {
         }
       }
 
+      if (fds[1].revents & POLLIN) {
+        orb_copy(ORB_ID(sensor_combined),
+            sensor_sub_fd,
+            &sensors);
+        //TODO update _prev_sens array in estimator
+        nav.set_prev_inert_sens(&sensors);
+      }
+
 #ifndef ELKA_DEBUG
-      if (fds[1].revents & POLLIN) { // estimator_pos 
+      if (fds[len_fds-4].revents & POLLIN) { // estimator_pos 
         orb_copy(ORB_ID(vehicle_local_position),
                  estimator_pos_sub_fd,
                  &estimator_pos);
         using_vision&=2; // Bitmask 0 as first bit
       }
-      if (fds[2].revents & POLLIN) { // estimator_att
+      if (fds[len_fds-3].revents & POLLIN) { // estimator_att
         orb_copy(ORB_ID(vehicle_attitude),
                  estimator_att_sub_fd,
                  &estimator_att);

@@ -41,7 +41,6 @@ private:
   pose_stamped_s _setpoint; // stores current setpoint
   pose_stamped_s _curr_err;
   pose_stamped_s _prev_min_err;
-  pose_stamped_s _prev_sens;
   bool _new_setpoint;
   math::Matrix<3,3> _elka_sf_r;
   math::Vector<3> _elka_sf_t;
@@ -63,6 +62,7 @@ public:
   pose_stamped_s *get_setpoint();
   float get_setpoint(uint8_t n);
 
+  void set_prev_inert_sens(sensor_combined_s *s);
   void set_pose(hrt_abstime t,math::Vector<STATE_LEN>*v);
   void set_pose(hrt_abstime t[STATE_LEN],math::Vector<STATE_LEN>*v);
   void set_pose(pose_stamped_s *p);

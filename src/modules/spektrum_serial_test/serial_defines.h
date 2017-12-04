@@ -51,3 +51,10 @@
 //#define DEBUG_SPEKTRUM 1
 //#define DEBUG_TRANSFORM 1
 
+#define SENSOR_NONE 0
+#define SENSOR_ACCEL 1
+#define SENSOR_GYRO 2
+#define SENSOR_MAG 3
+#define SENSOR_BARO 4
+#define SENSOR_CAM 5
+

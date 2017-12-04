@@ -5,10 +5,32 @@ elka::BasicEstimator::BasicEstimator() {
   _curr_pose.set_pose(hrt_absolute_time(),&tmp);
   _prev_pose.set_pose(hrt_absolute_time(),&tmp);
   _prev_filt_pose.set_pose(hrt_absolute_time(),&tmp);
+
+  // Set up sensors
+  _prev_acc.set_type(SENSOR_ACCEL);
+  _prev_gyro.set_type(SENSOR_GYRO);
+  _prev_cam.set_type(SENSOR_CAM);
+  //TODO set offsets for imu, gyro, camera
+  _prev_acc.set_offset(math::Vector<3>(), math::Matrix<3,3>());
+  _prev_gyro.set_offset(math::Vector<3>(), math::Matrix<3,3>());
+  _prev_cam.set_offset(math::Vector<3>(), math::Matrix<3,3>());
 }
 
 elka::BasicEstimator::~BasicEstimator() {
 
+}
+
+void elka::BasicEstimator::set_prev_inert_sens(sensor_combined_s *s) {
+  _prev_acc.set_data(
+      s->timestamp+s->accelerometer_timestamp_relative;
+      {accelerometer_m_s2[0],
+       accelerometer_m_s2[1],
+       accelerometer_m_s2[2]});
+  _prev_acc.set_data(
+      s->timestamp
+      {gyro_rad[0],
+       gyro_rad[1],
+       gyro_rad[2]});
 }
 
 pose_stamped_s *elka::BasicEstimator::get_pose() {
@@ -61,7 +83,6 @@ void elka::BasicEstimator::update_prev_pose(uint8_t n) {
                       _curr_pose.pose(n));
 }
 
-//TODO
 void elka::BasicEstimator::low_pass_filt(
     uint8_t *filter_states) {
   float alpha=0.07;
@@ -104,4 +125,68 @@ void elka::BasicEstimator::low_pass_filt(
 
     filter_states++;
   }
+}
+
+void BasicEstimator::ekf() {
+  // Using state matrix x:
+  //    p=posiiton_cam
+  //    q=rotation_cam
+  //    pd=velocity_cam
+  //    b_g=bias_gyro
+  //    b_a=bias_accelerometer
+
+  // Using nonlinear stochastic equation dx=f(x,u,n):
+  //    pd
+  //    G(q)^-1*(w_m)
+  //    g+R(q)*(a_m-b_a-n_a)
+  //    n_g
+  //    n_a
+  //
+  //    With w_m = gyro measurements
+  //         a_m = accel measurements
+  //         n_g = noise gyro
+  //         n_a = noise accel
+  //         g = gravitational constant
+  //         G = conversion matrix from body->inertial angle rates
+  //         R = body->inertial rotation matrix
+
+  // Define f(mu_{t-1},u_t,0)
+  static math::Vector<STATE_LEN_EKF> prev_mean_update(),
+                                     mu_bar_t(),
+                                     mu_t(),
+                                     b();
+  static math::Matrix<STATE_LEN_EKF,STATE_LEN_EKF_ODOM> A(),
+                                                        F();
+  static math::Matrix<STATE_LEN_EKF,STATE_LEN_EKF_BIAS> U(),
+                                                        V();
+
+  // Define convenience vars for jacobians A,U,F,V,b
+  // A=df/dx|(mu_{t-1},u_t,0)
+  A(1,4)=1;
+  A(2,5)=1;
+  A(3,6)=1;
+
+  // Define model and sensor covariance matrices Q,R
+  
+  // Update mean bar{mu}_t
+  
+  // Update bar{Sigma}_t
+
+  // Update _prev_filt_pose for use later to update
+  // prev_mean_update
+  _prev_filt_pose.set_pose(&curr_pose);
+  
+  // Define convenience jacobians vars for jacobians C,W
+
+  // Define h(bar{mu}_t,0)
+
+  // Define K_t
+  
+  // Update mu_t and update prev_mean_update
+
+  prev_mean_update = mu_t-_prev_filt_pose;
+
+  // Update Sigma_t
+
+  // Update curr_pose to be value of mu_t
 }
