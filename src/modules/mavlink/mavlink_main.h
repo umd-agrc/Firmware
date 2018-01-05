@@ -452,7 +452,7 @@ public:
 	int			get_data_rate()		{ return _datarate; }
 	void			set_data_rate(int rate) { if (rate > 0) { _datarate = rate; } }
 
-	uint64_t		get_main_loop_delay() { return _main_loop_delay; }
+	unsigned		get_main_loop_delay() const { return _main_loop_delay; }
 
 	/** get the Mavlink shell. Create a new one if there isn't one. It is *always* created via MavlinkReceiver thread.
 	 *  Returns nullptr if shell cannot be created */
@@ -475,6 +475,8 @@ public:
 
 
 	void set_uorb_main_fd(int fd, unsigned int interval);
+
+	bool ftp_enabled() const { return _ftp_on; }
 
 protected:
 	Mavlink			*next;
@@ -591,7 +593,7 @@ private:
 	pthread_mutex_t		_send_mutex;
 
 	bool			_param_initialized;
-	uint32_t		_broadcast_mode;
+	int32_t			_broadcast_mode;
 
 	param_t			_param_system_id;
 	param_t			_param_component_id;

@@ -72,7 +72,7 @@
 #include "airspeedsim.h"
 
 AirspeedSim::AirspeedSim(int bus, int address, unsigned conversion_interval, const char *path) :
-	VDev("AIRSPEEDSIM", path),
+	CDev("AIRSPEEDSIM", path),
 	_reports(nullptr),
 	_retries(0),
 	_sensor_ok(false),
@@ -119,8 +119,8 @@ AirspeedSim::init()
 	int ret = ERROR;
 
 	/* init base class */
-	if (VDev::init() != OK) {
-		DEVICE_DEBUG("VDev init failed");
+	if (CDev::init() != OK) {
+		DEVICE_DEBUG("CDev init failed");
 		goto out;
 	}
 
@@ -258,9 +258,6 @@ AirspeedSim::ioctl(device::file_t *filp, int cmd, unsigned long arg)
 
 			return OK;
 		}
-
-	case SENSORIOCGQUEUEDEPTH:
-		return _reports->size();
 
 	case SENSORIOCRESET:
 		/* XXX implement this */

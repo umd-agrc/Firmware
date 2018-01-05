@@ -1971,8 +1971,8 @@ Mavlink::task_main(int argc, char *argv[])
 	pthread_mutex_init(&_send_mutex, nullptr);
 
 	/* if we are passing on mavlink messages, we need to prepare a buffer for this instance */
-	if (_forwarding_on || _ftp_on) {
-		/* initialize message buffer if multiplexing is on or its needed for FTP.
+	if (_forwarding_on) {
+		/* initialize message buffer if multiplexing is on.
 		 * make space for two messages plus off-by-one space as we use the empty element
 		 * marker ring buffer approach.
 		 */
@@ -1987,9 +1987,6 @@ Mavlink::task_main(int argc, char *argv[])
 
 	/* Initialize system properties */
 	mavlink_update_system();
-
-	/* start the MAVLink receiver */
-	MavlinkReceiver::receive_start(&_receive_thread, this);
 
 	MavlinkOrbSubscription *param_sub = add_orb_subscription(ORB_ID(parameter_update));
 	uint64_t param_time = 0;
@@ -2045,6 +2042,8 @@ Mavlink::task_main(int argc, char *argv[])
 		configure_stream("ATTITUDE_TARGET", 2.0f);
 		configure_stream("HOME_POSITION", 0.5f);
 		configure_stream("NAMED_VALUE_FLOAT", 1.0f);
+		configure_stream("DEBUG", 1.0f);
+		configure_stream("DEBUG_VECT", 1.0f);
 		configure_stream("VFR_HUD", 4.0f);
 		configure_stream("WIND_COV", 1.0f);
 		configure_stream("CAMERA_IMAGE_CAPTURED");
@@ -2073,6 +2072,8 @@ Mavlink::task_main(int argc, char *argv[])
 		configure_stream("ATTITUDE_TARGET", 10.0f);
 		configure_stream("HOME_POSITION", 0.5f);
 		configure_stream("NAMED_VALUE_FLOAT", 10.0f);
+		configure_stream("DEBUG", 10.0f);
+		configure_stream("DEBUG_VECT", 10.0f);
 		configure_stream("VFR_HUD", 10.0f);
 		configure_stream("WIND_COV", 10.0f);
 		configure_stream("POSITION_TARGET_LOCAL_NED", 10.0f);
@@ -2132,6 +2133,8 @@ Mavlink::task_main(int argc, char *argv[])
 		configure_stream("ATTITUDE_TARGET", 8.0f);
 		configure_stream("HOME_POSITION", 0.5f);
 		configure_stream("NAMED_VALUE_FLOAT", 50.0f);
+		configure_stream("DEBUG", 50.0f);
+		configure_stream("DEBUG_VECT", 50.0f);
 		configure_stream("VFR_HUD", 20.0f);
 		configure_stream("WIND_COV", 10.0f);
 		configure_stream("CAMERA_TRIGGER");
@@ -2174,6 +2177,9 @@ Mavlink::task_main(int argc, char *argv[])
 		send_autopilot_capabilites();
 	}
 
+	/* start the MAVLink receiver last to avoid a race */
+	MavlinkReceiver::receive_start(&_receive_thread, this);
+
 	while (!_task_should_exit) {
 		/* main loop */
 		usleep(_main_loop_delay);
@@ -2207,6 +2213,10 @@ Mavlink::task_main(int argc, char *argv[])
 				mavlink_command_ack_t msg;
 				msg.result = command_ack.result;
 				msg.command = command_ack.command;
+				msg.progress = command_ack.result_param1;
+				msg.result_param2 = command_ack.result_param2;
+				msg.target_system = command_ack.target_system;
+				msg.target_component = command_ack.target_component;
 				current_command_ack = command_ack.command;
 
 				mavlink_msg_command_ack_send_struct(get_channel(), &msg);
@@ -2297,8 +2307,8 @@ Mavlink::task_main(int argc, char *argv[])
 			stream->update(t);
 		}
 
-		/* pass messages from other UARTs or FTP worker */
-		if (_forwarding_on || _ftp_on) {
+		/* pass messages from other UARTs */
+		if (_forwarding_on) {
 
 			bool is_part;
 			uint8_t *read_ptr;
@@ -2406,7 +2416,7 @@ Mavlink::task_main(int argc, char *argv[])
 		_socket_fd = -1;
 	}
 
-	if (_forwarding_on || _ftp_on) {
+	if (_forwarding_on) {
 		message_buffer_destroy();
 		pthread_mutex_destroy(&_message_buffer_mutex);
 	}
@@ -2468,7 +2478,7 @@ void Mavlink::check_radio_config()
 
 		/* reset param and save */
 		_radio_id = 0;
-		param_set(_param_radio_id, &_radio_id);
+		param_set_no_notification(_param_radio_id, &_radio_id);
 	}
 }
 
@@ -2600,7 +2610,7 @@ Mavlink::display_status()
 		       (double)_mavlink_ulog->maximum_data_rate() * 100.);
 	}
 
-	printf("\taccepting commands: %s\n", (accepting_commands()) ? "YES" : "NO");
+	printf("\taccepting commands: %s, FTP enabled: %s\n", accepting_commands() ? "YES" : "NO", _ftp_on ? "YES" : "NO");
 	printf("\tMAVLink version: %i\n", _protocol_version);
 
 	printf("\ttransport protocol: ");

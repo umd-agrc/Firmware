@@ -14,7 +14,7 @@ const uint8_t BMI055_accel::_checked_registers[BMI055_ACCEL_NUM_CHECKED_REGISTER
 
 
 
-BMI055_accel::BMI055_accel(int bus, const char *path_accel, spi_dev_e device, enum Rotation rotation) :
+BMI055_accel::BMI055_accel(int bus, const char *path_accel, uint32_t device, enum Rotation rotation) :
 	BMI055("BMI055_ACCEL", path_accel, bus, device, SPIDEV_MODE3, BMI055_BUS_SPEED, rotation),
 	_accel_reports(nullptr),
 	_accel_scale{},
@@ -79,7 +79,6 @@ BMI055_accel::init()
 
 	/* if probe/setup failed, bail now */
 	if (ret != OK) {
-		warnx("SPI error");
 		DEVICE_DEBUG("SPI setup failed");
 		return ret;
 	}
@@ -114,7 +113,7 @@ BMI055_accel::init()
 
 	/* measurement will have generated a report, publish */
 	_accel_topic = orb_advertise_multi(ORB_ID(sensor_accel), &arp,
-					   &_accel_orb_class_instance, (is_external()) ? ORB_PRIO_MAX - 1 : ORB_PRIO_HIGH - 1);
+					   &_accel_orb_class_instance, (external()) ? ORB_PRIO_MAX - 1 : ORB_PRIO_HIGH - 1);
 
 	if (_accel_topic == nullptr) {
 		warnx("ADVERT FAIL");
@@ -435,24 +434,11 @@ BMI055_accel::ioctl(struct file *filp, int cmd, unsigned long arg)
 			return OK;
 		}
 
-	case SENSORIOCGQUEUEDEPTH:
-		return _accel_reports->size();
-
 	case ACCELIOCGSAMPLERATE:
 		return _accel_sample_rate;
 
 	case ACCELIOCSSAMPLERATE:
 		return accel_set_sample_rate(arg);
-
-	case ACCELIOCGLOWPASS:
-		return _accel_filter_x.get_cutoff_freq();
-
-	case ACCELIOCSLOWPASS:
-		// set software filtering
-		_accel_filter_x.set_cutoff_frequency(1.0e6f / _call_interval, arg);
-		_accel_filter_y.set_cutoff_frequency(1.0e6f / _call_interval, arg);
-		_accel_filter_z.set_cutoff_frequency(1.0e6f / _call_interval, arg);
-		return OK;
 
 	case ACCELIOCSSCALE: {
 			/* copy scale, but only if off by a few percent */
@@ -481,19 +467,6 @@ BMI055_accel::ioctl(struct file *filp, int cmd, unsigned long arg)
 
 	case ACCELIOCSELFTEST:
 		return accel_self_test();
-
-#ifdef ACCELIOCSHWLOWPASS
-
-	case ACCELIOCSHWLOWPASS:
-		return OK;
-#endif
-
-#ifdef ACCELIOCGHWLOWPASS
-
-	case ACCELIOCGHWLOWPASS:
-		return _dlpf_freq;
-#endif
-
 
 	default:
 		/* give it to the superclass */

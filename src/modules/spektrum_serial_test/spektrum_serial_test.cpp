@@ -443,4 +443,3 @@ inline bool old_msg(hrt_abstime msg_time) {
 void set_old_msg_duration(hrt_abstime time) {
   _old_msg_duration = time;
 }
-

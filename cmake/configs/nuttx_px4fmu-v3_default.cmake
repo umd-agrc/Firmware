@@ -1,8 +1,12 @@
+
+# FMUv3 is FMUv2 with access to the full 2MB flash
+set(BOARD px4fmu-v2 CACHE string "" FORCE)
+set(FW_NAME nuttx_px4fmu-v3_default.elf CACHE string "" FORCE)
+set(FW_PROTOTYPE px4fmu-v3 CACHE string "" FORCE)
+set(LD_SCRIPT ld_full.script CACHE string "" FORCE)
+
 include(nuttx/px4_impl_nuttx)
-
-px4_nuttx_configure(HWCLASS m4 CONFIG nsh ROMFS y ROMFSROOT px4fmu_common)
-
-set(CMAKE_TOOLCHAIN_FILE ${PX4_SOURCE_DIR}/cmake/toolchains/Toolchain-arm-none-eabi.cmake)
+px4_nuttx_configure(HWCLASS m4 CONFIG nsh ROMFS y ROMFSROOT px4fmu_common IO px4io-v2)
 
 set(config_uavcan_num_ifaces 2)
 
@@ -10,11 +14,12 @@ set(config_module_list
 	#
 	# Board support modules
 	#
+	drivers/adis16448
 	drivers/airspeed
 	drivers/blinkm
 	drivers/bmi160
 	drivers/bmp280
-	drivers/boards/px4fmu-v2
+	drivers/boards
 	drivers/bst
 	drivers/camera_trigger
 	drivers/device
@@ -26,6 +31,7 @@ set(config_module_list
 	drivers/hott/hott_sensors
 	drivers/hott/hott_telemetry
 	drivers/iridiumsbd
+	drivers/irlock
 	drivers/l3gd20
 	drivers/led
 	drivers/lis3mdl
@@ -39,6 +45,7 @@ set(config_module_list
 	drivers/ms5525_airspeed
 	drivers/ms5611
 	drivers/oreoled
+	drivers/protocol_splitter
 	drivers/pwm_input
 	drivers/pwm_out_sim
 	drivers/px4flow
@@ -54,9 +61,11 @@ set(config_module_list
 	drivers/stm32/adc
 	drivers/stm32/tone_alarm
 	drivers/tap_esc
-	drivers/trone
+	drivers/teraranger
+	drivers/ulanding
 	drivers/vmount
 	modules/sensors
+	drivers/tfmini
 
 	#
 	# System commands
@@ -86,18 +95,18 @@ set(config_module_list
 	#
 	drivers/sf0x/sf0x_tests
 	drivers/test_ppm
+	lib/controllib/controllib_test
 	#lib/rc/rc_tests
 	modules/commander/commander_tests
-	lib/controllib/controllib_test
 	modules/mavlink/mavlink_tests
 	modules/mc_pos_control/mc_pos_control_tests
-	modules/unit_test
 	modules/uORB/uORB_tests
 	systemcmds/tests
 
 	#
 	# General system control
 	#
+	modules/camera_feedback
 	modules/commander
 	modules/events
 	modules/gpio_led
@@ -106,7 +115,6 @@ set(config_module_list
 	modules/mavlink
 	modules/navigator
 	modules/uavcan
-	modules/camera_feedback
 
 	#
 	# Estimation modules
@@ -137,13 +145,9 @@ set(config_module_list
 	# Library modules
 	#
 	modules/dataman
-	modules/systemlib/param
 	modules/systemlib
-	modules/systemlib/mixer
+	modules/systemlib/param
 	modules/uORB
-
-	# micro RTPS
-	modules/micrortps_bridge/micrortps_client
 
 	#
 	# Libraries
@@ -152,18 +156,17 @@ set(config_module_list
 	lib/conversion
 	lib/DriverFramework/framework
 	lib/ecl
-	lib/external_lgpl
 	lib/geo
 	lib/geo_lookup
 	lib/launchdetection
 	lib/led
 	lib/mathlib
 	lib/mathlib/math/filter
+	lib/mixer
 	lib/runway_takeoff
 	lib/tailsitter_recovery
 	lib/terrain_estimation
 	lib/version
-	lib/micro-CDR
 
 	#
 	# Platform
@@ -175,7 +178,7 @@ set(config_module_list
 	#
 	# OBC challenge
 	#
-	modules/bottle_drop
+	examples/bottle_drop
 
 	#
 	# Rover apps
@@ -209,46 +212,4 @@ set(config_module_list
 
 	# Hardware test
 	examples/hwtest
-
-	# EKF
-	examples/ekf_att_pos_estimator
 )
-
-set(config_rtps_send_topics
-   sensor_combined
-   )
-
-set(config_rtps_receive_topics
-   sensor_baro
-   )
-
-set(config_extra_builtin_cmds
-	serdis
-	sercon
-	)
-
-set(config_io_board
-	px4io-v2
-	)
-
-set(config_extra_libs
-	uavcan
-	uavcan_stm32_driver
-	)
-
-set(config_io_extra_libs
-	)
-
-add_custom_target(sercon)
-set_target_properties(sercon PROPERTIES
-	PRIORITY "SCHED_PRIORITY_DEFAULT"
-	MAIN "sercon"
-	STACK_MAIN "2048"
-	COMPILE_FLAGS "-Os")
-
-add_custom_target(serdis)
-set_target_properties(serdis PROPERTIES
-	PRIORITY "SCHED_PRIORITY_DEFAULT"
-	MAIN "serdis"
-	STACK_MAIN "2048"
-	COMPILE_FLAGS "-Os")

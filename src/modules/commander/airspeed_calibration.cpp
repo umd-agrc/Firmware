@@ -109,9 +109,7 @@ int do_airspeed_calibration(orb_advert_t *mavlink_log_pub)
 		float analog_scaling = 0.0f;
 		param_get(param_find("SENS_DPRES_ANSC"), &(analog_scaling));
 		if (fabsf(analog_scaling) < 0.1f) {
-			calibration_log_critical(mavlink_log_pub, "[cal] No airspeed sensor, refer to the following:");
-			calibration_log_critical(mavlink_log_pub, "http://px4.io/docs/sensor-selection/");
-			calibration_log_critical(mavlink_log_pub, "http://px4.io/docs/vtols-without-airspeed-sensor/");
+			calibration_log_critical(mavlink_log_pub, "[cal] No airspeed sensor found");
 			goto error_return;
 		}
 
@@ -175,6 +173,14 @@ int do_airspeed_calibration(orb_advert_t *mavlink_log_pub)
 			}
 
 			px4_close(fd_scale);
+		}
+
+		// Prevent a completely zero param
+		// since this is used to detect a missing calibration
+		// This value is numerically down in the noise and has
+		// no effect on the sensor performance.
+		if (fabsf(diff_pres_offset) < 0.00000001f) {
+			diff_pres_offset = 0.00000001f;
 		}
 
 		if (param_set(param_find("SENS_DPRES_OFF"), &(diff_pres_offset))) {

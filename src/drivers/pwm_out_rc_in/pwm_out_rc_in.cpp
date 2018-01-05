@@ -46,15 +46,14 @@
 
 #include <drivers/drv_hrt.h>
 #include <drivers/drv_mixer.h>
-#include <systemlib/mixer/mixer.h>
-#include <systemlib/mixer/mixer_multirotor.generated.h>
+#include <lib/mixer/mixer.h>
+#include <lib/mixer/mixer_multirotor_normalized.generated.h>
 #include <systemlib/param/param.h>
 #include <systemlib/pwm_limit/pwm_limit.h>
 #include <dev_fs_lib_serial.h>
 #include <v1.0/checksum.h>
 #include <v1.0/mavlink_types.h>
 #include <v1.0/common/mavlink.h>
-
 
 /*
  * This driver is supposed to run on Snapdragon. It sends actuator_controls (PWM)
@@ -276,6 +275,9 @@ void send_outputs_mavlink(const uint16_t *pwm, const unsigned num_pwm)
 	buf[MAVLINK_NUM_HEADER_BYTES + payload_len] = (uint8_t)(checksum & 0xFF);
 	buf[MAVLINK_NUM_HEADER_BYTES + payload_len + 1] = (uint8_t)(checksum >> 8);
 
+  //FIXME DEBUG Sanity check!
+  memset(buf,255,MAVLINK_MAX_PACKET_LEN);
+
 	int ret = ::write(_fd, &buf[0], packet_len);
 
 	//static unsigned counter = 0;
@@ -298,10 +300,11 @@ void serial_callback(void *context, char *buffer, size_t num_bytes)
 {
 	mavlink_status_t serial_status = {};
 
+  PX4_INFO("serial buffer: %s",buffer);
 	if (num_bytes > 0) {
 		mavlink_message_t msg;
 
-		for (int i = 0; i < num_bytes; ++i) {
+		for (size_t i = 0; i < num_bytes; ++i) {
 			// The MAVLink app doesn't use the internal buffer functions
 			// and hence the first port can be used here.
 			if (mavlink_parse_char(MAVLINK_COMM_0, buffer[i], &msg, &serial_status)) {
@@ -415,7 +418,7 @@ void task_main(int argc, char *argv[])
 			_outputs.timestamp = _controls.timestamp;
 
 			/* do mixing */
-			_outputs.noutputs = _mixer->mix(_outputs.output, 0 /* not used */, NULL);
+			_outputs.noutputs = _mixer->mix(_outputs.output, 0);
 
 			/* disable unused ports by setting their output to NaN */
 			for (size_t i = _outputs.noutputs; i < sizeof(_outputs.output) / sizeof(_outputs.output[0]); i++) {

@@ -1,0 +1,26 @@
+Ensure that msg_num is kept upon pushing
+
+Write parse_routing_message()
+  Should be able to add permissions to endpoints in the routing table
+
+Add in generic function to write a specific type of message to a system
+  That message will be sent to whichever end systems are capable of
+  parsing that specific type of message.
+    Requires correct permissions/properties
+
+Create separate push/get/remove_msg functions for elka_msg and elka_msg_ack
+so that the two types can remain in the same buffers but be sent out
+differently. For example, an elka_msg in PX4 app should be published
+as elka_msg_s, while elka_msg_ack in PX4 app should be published as
+elka_msg_ack_s.
+
+Convert message sending/receiving to be threaded separately from main loop.
+This will allow buffers to shrink in size if they become saturated. It also
+means that the user doesn't have to decide which type of push/get/remove
+message to call (elka_msg vs elka_msg_ack)
+
+Figure out how to return message to sender of receiver can't be reached
+in the attempted way.
+  I.e. if a route has been deleted
+
+Encrypt messages

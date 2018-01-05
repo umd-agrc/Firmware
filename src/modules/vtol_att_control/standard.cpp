@@ -72,9 +72,10 @@ Standard::Standard(VtolAttitudeControl *attc) :
 	_params_handles_standard.front_trans_time_min = param_find("VT_TRANS_MIN_TM");
 	_params_handles_standard.down_pitch_max = param_find("VT_DWN_PITCH_MAX");
 	_params_handles_standard.forward_thrust_scale = param_find("VT_FWD_THRUST_SC");
-	_params_handles_standard.airspeed_mode = param_find("FW_ARSP_MODE");
+	_params_handles_standard.airspeed_disabled = param_find("FW_ARSP_MODE");
 	_params_handles_standard.pitch_setpoint_offset = param_find("FW_PSP_OFF");
 	_params_handles_standard.reverse_output = param_find("VT_B_REV_OUT");
+	_params_handles_standard.reverse_delay = param_find("VT_B_REV_DEL");
 	_params_handles_standard.back_trans_throttle = param_find("VT_B_TRANS_THR");
 	_params_handles_standard.mpc_xy_cruise = param_find("MPC_XY_CRUISE");
 
@@ -130,8 +131,8 @@ Standard::parameters_update()
 	param_get(_params_handles_standard.forward_thrust_scale, &_params_standard.forward_thrust_scale);
 
 	/* airspeed mode */
-	param_get(_params_handles_standard.airspeed_mode, &i);
-	_params_standard.airspeed_mode = math::constrain(i, 0, 2);
+	param_get(_params_handles_standard.airspeed_disabled, &i);
+	_params_standard.airspeed_disabled = math::constrain(i, 0, 1);
 
 	/* pitch setpoint offset */
 	param_get(_params_handles_standard.pitch_setpoint_offset, &v);
@@ -140,6 +141,10 @@ Standard::parameters_update()
 	/* reverse output */
 	param_get(_params_handles_standard.reverse_output, &v);
 	_params_standard.reverse_output = math::constrain(v, 0.0f, 1.0f);
+
+	/* reverse output */
+	param_get(_params_handles_standard.reverse_delay, &v);
+	_params_standard.reverse_delay = math::constrain(v, 0.0f, 10.0f);
 
 	/* reverse throttle */
 	param_get(_params_handles_standard.back_trans_throttle, &v);
@@ -201,13 +206,16 @@ void Standard::update_vtol_state()
 
 
 		} else if (_vtol_schedule.flight_mode == TRANSITION_TO_MC) {
-			// transition to MC mode if transition time has passed
-			// XXX: base this on XY hold velocity of MC
-			float vel = sqrtf(_local_pos->vx * _local_pos->vx + _local_pos->vy * _local_pos->vy);
+			// transition to MC mode if transition time has passed or forward velocity drops below MPC cruise speed
+
+			const matrix::Dcmf R_to_body(matrix::Quatf(_v_att->q).inversed());
+			const matrix::Vector3f vel = R_to_body * matrix::Vector3f(_local_pos->vx, _local_pos->vy, _local_pos->vz);
+
+			float x_vel = vel(0);
 
 			if (hrt_elapsed_time(&_vtol_schedule.transition_start) >
 			    (_params_standard.back_trans_dur * 1000000.0f) ||
-			    (_local_pos->v_xy_valid && vel <= _params_standard.mpc_xy_cruise)) {
+			    (_local_pos->v_xy_valid && x_vel <= _params_standard.mpc_xy_cruise)) {
 				_vtol_schedule.flight_mode = MC_MODE;
 			}
 
@@ -232,7 +240,7 @@ void Standard::update_vtol_state()
 
 		} else if (_vtol_schedule.flight_mode == TRANSITION_TO_FW) {
 			// continue the transition to fw mode while monitoring airspeed for a final switch to fw mode
-			if (((_params_standard.airspeed_mode == control_state_s::AIRSPD_MODE_DISABLED ||
+			if (((_params_standard.airspeed_disabled == 1 ||
 			      _airspeed->indicated_airspeed_m_s >= _params_standard.airspeed_trans) &&
 			     (float)hrt_elapsed_time(&_vtol_schedule.transition_start)
 			     > (_params_standard.front_trans_time_min * 1000000.0f)) ||
@@ -300,14 +308,13 @@ void Standard::update_transition_state()
 
 			// time based blending when no airspeed sensor is set
 
-		} else if (_params_standard.airspeed_mode == control_state_s::AIRSPD_MODE_DISABLED &&
-			   (float)hrt_elapsed_time(&_vtol_schedule.transition_start) < (_params_standard.front_trans_time_min * 1000000.0f) &&
-			   (float)hrt_elapsed_time(&_vtol_schedule.transition_start) > ((_params_standard.front_trans_time_min / 2.0f) *
-					   1000000.0f)
+		} else if (_params_standard.airspeed_disabled &&
+			   hrt_elapsed_time(&_vtol_schedule.transition_start) < (_params_standard.front_trans_time_min * 1e6f) &&
+			   hrt_elapsed_time(&_vtol_schedule.transition_start) > ((_params_standard.front_trans_time_min / 2.0f) * 1e6f)
 			  ) {
-			float weight = 1.0f - ((float)(hrt_elapsed_time(&_vtol_schedule.transition_start) - ((
-							       _params_standard.front_trans_time_min / 2.0f) * 1000000.0f)) /
-					       ((_params_standard.front_trans_time_min / 2.0f) * 1000000.0f));
+			float weight = 1.0f - ((hrt_elapsed_time(&_vtol_schedule.transition_start) - ((
+							_params_standard.front_trans_time_min / 2.0f) * 1e6f)) /
+					       ((_params_standard.front_trans_time_min / 2.0f) * 1e6f));
 
 			weight = math::constrain(weight, 0.0f, 1.0f);
 
@@ -332,7 +339,7 @@ void Standard::update_transition_state()
 
 		// check front transition timeout
 		if (_params_standard.front_trans_timeout > FLT_EPSILON) {
-			if ((float)hrt_elapsed_time(&_vtol_schedule.transition_start) > (_params_standard.front_trans_timeout * 1000000.0f)) {
+			if (hrt_elapsed_time(&_vtol_schedule.transition_start) > (_params_standard.front_trans_timeout * 1e6f)) {
 				// transition timeout occured, abort transition
 				_attc->abort_front_transition("Transition timeout");
 			}
@@ -346,11 +353,17 @@ void Standard::update_transition_state()
 		q_sp.copyTo(_v_att_sp->q_d);
 		_v_att_sp->q_d_valid = true;
 
-		// Handle throttle reversal for active breaking
-		float thrscale = (float)hrt_elapsed_time(&_vtol_schedule.transition_start) / (_params_standard.front_trans_dur *
-				 1000000.0f);
-		thrscale = math::constrain(thrscale, 0.0f, 1.0f);
-		_pusher_throttle = thrscale * _params_standard.back_trans_throttle;
+		hrt_abstime btrans_start;
+		btrans_start = _vtol_schedule.transition_start + uint64_t(_params_standard.reverse_delay) * 1000000.0f;
+		_pusher_throttle = 0.0f;
+
+		if (hrt_absolute_time() >= btrans_start) {
+			// Handle throttle reversal for active breaking
+			float thrscale = (float)hrt_elapsed_time(&btrans_start) / (_params_standard.front_trans_dur *
+					 1000000.0f);
+			thrscale = math::constrain(thrscale, 0.0f, 1.0f);
+			_pusher_throttle = thrscale * _params_standard.back_trans_throttle;
+		}
 
 		// continually increase mc attitude control as we transition back to mc mode
 		if (_params_standard.back_trans_ramp > FLT_EPSILON) {
@@ -413,7 +426,6 @@ void Standard::update_mc_state()
 		return;
 	}
 
-
 	matrix::Dcmf R(matrix::Quatf(_v_att->q));
 	matrix::Dcmf R_sp(matrix::Quatf(_v_att_sp->q_d));
 	matrix::Eulerf euler(R);
@@ -440,7 +452,7 @@ void Standard::update_mc_state()
 		float roll_new = -asinf(body_z_sp(1));
 
 		_pusher_throttle = (sinf(-pitch_forward) - sinf(_params_standard.down_pitch_max))
-				   * _v_att_sp->thrust * _params_standard.forward_thrust_scale;
+				   * _params_standard.forward_thrust_scale;
 
 		// return the vehicle to level position
 		float pitch_new = 0.0f;
@@ -460,7 +472,7 @@ void Standard::update_mc_state()
 		_v_att_sp->roll_body = -asinf(tilt_new(1));
 		R_sp = matrix::Eulerf(_v_att_sp->roll_body, _v_att_sp->pitch_body, euler_sp(2));
 		matrix::Quatf q_sp(R_sp);
-		memcpy(&_v_att_sp->q_d[0], &q_sp._data[0], sizeof(_v_att_sp->q_d));
+		q_sp.copyTo(_v_att_sp->q_d);
 	}
 
 	_pusher_throttle = _pusher_throttle < 0.0f ? 0.0f : _pusher_throttle;
@@ -530,7 +542,7 @@ void Standard::fill_actuator_outputs()
 	}
 
 	// set the fixed wing throttle control
-	if (_vtol_schedule.flight_mode == FW_MODE && _armed->armed) {
+	if (_vtol_schedule.flight_mode == FW_MODE) {
 
 		// take the throttle value commanded by the fw controller
 		_actuators_out_1->control[actuator_controls_s::INDEX_THROTTLE] =

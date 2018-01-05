@@ -17,7 +17,7 @@ const uint8_t BMI055_gyro::_checked_registers[BMI055_GYRO_NUM_CHECKED_REGISTERS]
 										   };
 
 
-BMI055_gyro::BMI055_gyro(int bus, const char *path_gyro, spi_dev_e device, enum Rotation rotation) :
+BMI055_gyro::BMI055_gyro(int bus, const char *path_gyro, uint32_t device, enum Rotation rotation) :
 	BMI055("BMI055_GYRO", path_gyro, bus, device, SPIDEV_MODE3, BMI055_BUS_SPEED, rotation),
 	_gyro_reports(nullptr),
 	_gyro_scale{},
@@ -118,7 +118,7 @@ BMI055_gyro::init()
 	_gyro_reports->get(&grp);
 
 	_gyro_topic = orb_advertise_multi(ORB_ID(sensor_gyro), &grp,
-					  &_gyro_orb_class_instance, (is_external()) ? ORB_PRIO_MAX - 1 : ORB_PRIO_HIGH - 1);
+					  &_gyro_orb_class_instance, (external()) ? ORB_PRIO_MAX - 1 : ORB_PRIO_HIGH - 1);
 
 	if (_gyro_topic == nullptr) {
 		warnx("ADVERT FAIL");
@@ -184,7 +184,7 @@ BMI055_gyro::probe()
 		return OK;
 	}
 
-	PX4_ERR("unexpected whoami 0x%02x", _whoami);
+	DEVICE_DEBUG("unexpected whoami 0x%02x", _whoami);
 	return -EIO;
 }
 
@@ -435,24 +435,11 @@ BMI055_gyro::ioctl(struct file *filp, int cmd, unsigned long arg)
 			return OK;
 		}
 
-	case SENSORIOCGQUEUEDEPTH:
-		return _gyro_reports->size();
-
 	case GYROIOCGSAMPLERATE:
 		return _gyro_sample_rate;
 
 	case GYROIOCSSAMPLERATE:
 		return gyro_set_sample_rate(arg);
-
-	case GYROIOCGLOWPASS:
-		return _gyro_filter_x.get_cutoff_freq();
-
-	case GYROIOCSLOWPASS:
-		// set software filtering
-		_gyro_filter_x.set_cutoff_frequency(1.0e6f / _call_interval, arg);
-		_gyro_filter_y.set_cutoff_frequency(1.0e6f / _call_interval, arg);
-		_gyro_filter_z.set_cutoff_frequency(1.0e6f / _call_interval, arg);
-		return OK;
 
 	case GYROIOCSSCALE:
 		/* copy scale in */
@@ -472,18 +459,6 @@ BMI055_gyro::ioctl(struct file *filp, int cmd, unsigned long arg)
 
 	case GYROIOCSELFTEST:
 		return gyro_self_test();
-
-#ifdef GYROIOCSHWLOWPASS
-
-	case GYROIOCSHWLOWPASS:
-		return OK;
-#endif
-
-#ifdef GYROIOCGHWLOWPASS
-
-	case GYROIOCGHWLOWPASS:
-		return _dlpf_freq;
-#endif
 
 	default:
 		/* give it to the superclass */

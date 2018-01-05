@@ -153,7 +153,7 @@ protected:
 	Device			*_interface;
 
 private:
-	work_s			_work;
+	work_s			_work{};
 	unsigned		_measure_ticks;
 
 	ringbuffer::RingBuffer	*_reports;
@@ -177,7 +177,7 @@ private:
 
 	enum Rotation		_rotation;
 
-	struct mag_report	_last_report;           /**< used for info() */
+	struct mag_report	_last_report {};         /**< used for info() */
 
 	uint8_t			_range_bits;
 	uint8_t			_conf_reg;
@@ -345,7 +345,6 @@ extern "C" __EXPORT int hmc5883_main(int argc, char *argv[]);
 HMC5883::HMC5883(device::Device *interface, const char *path, enum Rotation rotation) :
 	CDev("HMC5883", path),
 	_interface(interface),
-	_work{},
 	_measure_ticks(0),
 	_reports(nullptr),
 	_scale{},
@@ -362,7 +361,6 @@ HMC5883::HMC5883(device::Device *interface, const char *path, enum Rotation rota
 	_sensor_ok(false),
 	_calibrated(false),
 	_rotation(rotation),
-	_last_report{0},
 	_range_bits(0),
 	_conf_reg(0),
 	_temperature_counter(0),
@@ -706,9 +704,6 @@ HMC5883::ioctl(struct file *filp, int cmd, unsigned long arg)
 			return OK;
 		}
 
-	case SENSORIOCGQUEUEDEPTH:
-		return _reports->size();
-
 	case SENSORIOCRESET:
 		return reset();
 
@@ -725,11 +720,6 @@ HMC5883::ioctl(struct file *filp, int cmd, unsigned long arg)
 
 	case MAGIOCGRANGE:
 		return _range_ga;
-
-	case MAGIOCSLOWPASS:
-	case MAGIOCGLOWPASS:
-		/* not supported, no internal filtering */
-		return -EINVAL;
 
 	case MAGIOCSSCALE:
 		/* set new scale factors */
@@ -987,8 +977,8 @@ HMC5883::collect()
 	 * to align the sensor axes with the board, x and y need to be flipped
 	 * and y needs to be negated
 	 */
-	new_report.x_raw = report.y;
-	new_report.y_raw = -report.x;
+	new_report.x_raw = -report.y;
+	new_report.y_raw = report.x;
 	/* z remains z */
 	new_report.z_raw = report.z;
 

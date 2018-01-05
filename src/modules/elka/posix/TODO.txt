@@ -1,0 +1,10 @@
+Fix ack checking. Can't just pop. What if new message is pushed
+with higher priority? In that case, you are popping new message.
+
+Thread sending from and receiving to buffers
+
+Restructure message reception to have push/remove similar to snapdragon_uart.
+That way prev_cmd_result can be determined from remove cmd
+
+Handle polling uORB messages for multiple devices better
+(i.e. not one at a time)
