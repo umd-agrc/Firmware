@@ -36,6 +36,7 @@
 
 #include <px4_config.h>
 #include <px4_log.h>
+#include <px4_tasks.h>
 
 #include <cstdlib>
 #include <cstring>
@@ -43,9 +44,8 @@
 #include <systemlib/err.h>
 #include <systemlib/systemlib.h>
 #include <systemlib/param/param.h>
-#include <systemlib/mixer/mixer.h>
+#include <lib/mixer/mixer.h>
 #include <systemlib/board_serial.h>
-#include <systemlib/scheduling_priorities.h>
 #include <version/version.h>
 #include <arch/board/board.h>
 #include <arch/chip/chip.h>

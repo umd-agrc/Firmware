@@ -41,6 +41,7 @@
 
 #include <px4_config.h>
 #include <px4_defines.h>
+#include <px4_getopt.h>
 
 #include <drivers/device/i2c.h>
 
@@ -101,7 +102,8 @@
 class SRF02_I2C : public device::I2C
 {
 public:
-	SRF02_I2C(int bus = SRF02_I2C_BUS, int address = SRF02_I2C_BASEADDR);
+	SRF02_I2C(uint8_t rotation = distance_sensor_s::ROTATION_DOWNWARD_FACING, int bus = SRF02_I2C_BUS,
+		  int address = SRF02_I2C_BASEADDR);
 	virtual ~SRF02_I2C();
 
 	virtual int 		init();
@@ -118,6 +120,7 @@ protected:
 	virtual int			probe();
 
 private:
+	uint8_t _rotation;
 	float				_min_distance;
 	float				_max_distance;
 	work_s				_work;
@@ -132,7 +135,6 @@ private:
 
 	perf_counter_t		_sample_perf;
 	perf_counter_t		_comms_errors;
-	perf_counter_t		_buffer_overflows;
 
 	uint8_t				_cycle_counter;	/* counter in cycle to change i2c adresses */
 	int					_cycling_rate;	/* */
@@ -197,8 +199,9 @@ private:
  */
 extern "C" { __EXPORT int srf02_i2c_main(int argc, char *argv[]);}
 
-SRF02_I2C::SRF02_I2C(int bus, int address) :
+SRF02_I2C::SRF02_I2C(uint8_t rotation, int bus, int address) :
 	I2C("MB12xx", SRF02_DEVICE_PATH, bus, address, 100000),
+	_rotation(rotation),
 	_min_distance(SRF02_MIN_DISTANCE),
 	_max_distance(SRF02_MAX_DISTANCE),
 	_reports(nullptr),
@@ -210,7 +213,6 @@ SRF02_I2C::SRF02_I2C(int bus, int address) :
 	_distance_sensor_topic(nullptr),
 	_sample_perf(perf_alloc(PC_ELAPSED, "srf02_i2c_read")),
 	_comms_errors(perf_alloc(PC_COUNT, "srf02_i2c_comms_errors")),
-	_buffer_overflows(perf_alloc(PC_COUNT, "srf02_i2c_buffer_overflows")),
 	_cycle_counter(0),	/* initialising counter for cycling function to zero */
 	_cycling_rate(0),	/* initialising cycling rate (which can differ depending on one sonar or multiple) */
 	_index_counter(0) 	/* initialising temp sonar i2c address to zero */
@@ -240,7 +242,6 @@ SRF02_I2C::~SRF02_I2C()
 	/* free perf counters */
 	perf_free(_sample_perf);
 	perf_free(_comms_errors);
-	perf_free(_buffer_overflows);
 }
 
 int
@@ -257,7 +258,7 @@ SRF02_I2C::init()
 	_reports = new ringbuffer::RingBuffer(2, sizeof(distance_sensor_s));
 
 	_index_counter = SRF02_I2C_BASEADDR;	/* set temp sonar i2c address to base adress */
-	set_address(_index_counter);		/* set I2c port to temp sonar i2c adress */
+	set_device_address(_index_counter);		/* set I2c port to temp sonar i2c adress */
 
 	if (_reports == nullptr) {
 		return ret;
@@ -283,7 +284,7 @@ SRF02_I2C::init()
 	   So second iteration it uses i2c address 111, third iteration 110 and so on*/
 	for (unsigned counter = 0; counter <= MB12XX_MAX_RANGEFINDERS; counter++) {
 		_index_counter = SRF02_I2C_BASEADDR + counter * 2;	/* set temp sonar i2c address to base adress - counter */
-		set_address(_index_counter);			/* set I2c port to temp sonar i2c adress */
+		set_device_address(_index_counter);			/* set I2c port to temp sonar i2c adress */
 		int ret2 = measure();
 
 		if (ret2 == 0) { /* sonar is present -> store address_index in array */
@@ -294,7 +295,7 @@ SRF02_I2C::init()
 	}
 
 	_index_counter = SRF02_I2C_BASEADDR;
-	set_address(_index_counter); /* set i2c port back to base adress for rest of driver */
+	set_device_address(_index_counter); /* set i2c port back to base adress for rest of driver */
 
 	/* if only one sonar detected, no special timing is required between firing, so use default */
 	if (addr_ind.size() == 1) {
@@ -438,24 +439,9 @@ SRF02_I2C::ioctl(struct file *filp, int cmd, unsigned long arg)
 			return OK;
 		}
 
-	case SENSORIOCGQUEUEDEPTH:
-		return _reports->size();
-
 	case SENSORIOCRESET:
 		/* XXX implement this */
 		return -EINVAL;
-
-	case RANGEFINDERIOCSETMINIUMDISTANCE: {
-			set_minimum_distance(*(float *)arg);
-			return 0;
-		}
-		break;
-
-	case RANGEFINDERIOCSETMAXIUMDISTANCE: {
-			set_maximum_distance(*(float *)arg);
-			return 0;
-		}
-		break;
 
 	default:
 		/* give it to the superclass */
@@ -576,7 +562,7 @@ SRF02_I2C::collect()
 	struct distance_sensor_s report;
 	report.timestamp = hrt_absolute_time();
 	report.type = distance_sensor_s::MAV_DISTANCE_SENSOR_ULTRASOUND;
-	report.orientation = 8;
+	report.orientation = _rotation;
 	report.current_distance = distance_m;
 	report.min_distance = get_minimum_distance();
 	report.max_distance = get_maximum_distance();
@@ -589,9 +575,7 @@ SRF02_I2C::collect()
 		orb_publish(ORB_ID(distance_sensor), _distance_sensor_topic, &report);
 	}
 
-	if (_reports->force(&report)) {
-		perf_count(_buffer_overflows);
-	}
+	_reports->force(&report);
 
 	/* notify anyone waiting for data */
 	poll_notify(POLLIN);
@@ -652,7 +636,7 @@ SRF02_I2C::cycle()
 {
 	if (_collect_phase) {
 		_index_counter = addr_ind[_cycle_counter]; /*sonar from previous iteration collect is now read out */
-		set_address(_index_counter);
+		set_device_address(_index_counter);
 
 		/* perform collection */
 		if (OK != collect()) {
@@ -691,7 +675,7 @@ SRF02_I2C::cycle()
 
 	/* ensure sonar i2c adress is still correct */
 	_index_counter = addr_ind[_cycle_counter];
-	set_address(_index_counter);
+	set_device_address(_index_counter);
 
 	/* Perform measurement */
 	if (OK != measure()) {
@@ -715,7 +699,6 @@ SRF02_I2C::print_info()
 {
 	perf_print_counter(_sample_perf);
 	perf_print_counter(_comms_errors);
-	perf_print_counter(_buffer_overflows);
 	printf("poll interval:  %u ticks\n", _measure_ticks);
 	_reports->print_info("report queue");
 }
@@ -728,7 +711,7 @@ namespace  srf02_i2c
 
 SRF02_I2C	*g_dev;
 
-void	start();
+void	start(uint8_t rotation);
 void	stop();
 void	test();
 void	reset();
@@ -738,7 +721,7 @@ void	info();
  * Start the driver.
  */
 void
-start()
+start(uint8_t rotation)
 {
 	int fd;
 
@@ -747,7 +730,7 @@ start()
 	}
 
 	/* create the driver */
-	g_dev = new SRF02_I2C(SRF02_I2C_BUS);
+	g_dev = new SRF02_I2C(rotation, SRF02_I2C_BUS);
 
 	if (g_dev == nullptr) {
 		goto fail;
@@ -909,38 +892,57 @@ info()
 int
 srf02_i2c_main(int argc, char *argv[])
 {
+	// check for optional arguments
+	int ch;
+	int myoptind = 1;
+	const char *myoptarg = NULL;
+	uint8_t rotation = distance_sensor_s::ROTATION_DOWNWARD_FACING;
+
+
+	while ((ch = px4_getopt(argc, argv, "R:", &myoptind, &myoptarg)) != EOF) {
+		switch (ch) {
+		case 'R':
+			rotation = (uint8_t)atoi(myoptarg);
+			PX4_INFO("Setting distance sensor orientation to %d", (int)rotation);
+			break;
+
+		default:
+			PX4_WARN("Unknown option!");
+		}
+	}
+
 	/*
 	 * Start/load the driver.
 	 */
-	if (!strcmp(argv[1], "start")) {
-		srf02_i2c::start();
+	if (!strcmp(argv[myoptind], "start")) {
+		srf02_i2c::start(rotation);
 	}
 
 	/*
 	 * Stop the driver
 	 */
-	if (!strcmp(argv[1], "stop")) {
+	if (!strcmp(argv[myoptind], "stop")) {
 		srf02_i2c::stop();
 	}
 
 	/*
 	 * Test the driver/device.
 	 */
-	if (!strcmp(argv[1], "test")) {
+	if (!strcmp(argv[myoptind], "test")) {
 		srf02_i2c::test();
 	}
 
 	/*
 	 * Reset the driver.
 	 */
-	if (!strcmp(argv[1], "reset")) {
+	if (!strcmp(argv[myoptind], "reset")) {
 		srf02_i2c::reset();
 	}
 
 	/*
 	 * Print driver information.
 	 */
-	if (!strcmp(argv[1], "info") || !strcmp(argv[1], "status")) {
+	if (!strcmp(argv[myoptind], "info") || !strcmp(argv[myoptind], "status")) {
 		srf02_i2c::info();
 	}
 

@@ -97,9 +97,32 @@ enum MS5611_BUS {
 /*
  * MS5611/MS5607 internal constants and data structures.
  */
+#define ADDR_CMD_CONVERT_D1_OSR256		0x40	/* write to this address to start pressure conversion */
+#define ADDR_CMD_CONVERT_D1_OSR512		0x42	/* write to this address to start pressure conversion */
+#define ADDR_CMD_CONVERT_D1_OSR1024		0x44	/* write to this address to start pressure conversion */
+#define ADDR_CMD_CONVERT_D1_OSR2048		0x46	/* write to this address to start pressure conversion */
+#define ADDR_CMD_CONVERT_D1_OSR4096		0x48	/* write to this address to start pressure conversion */
+#define ADDR_CMD_CONVERT_D2_OSR256		0x50	/* write to this address to start temperature conversion */
+#define ADDR_CMD_CONVERT_D2_OSR512		0x52	/* write to this address to start temperature conversion */
+#define ADDR_CMD_CONVERT_D2_OSR1024		0x54	/* write to this address to start temperature conversion */
+#define ADDR_CMD_CONVERT_D2_OSR2048		0x56	/* write to this address to start temperature conversion */
+#define ADDR_CMD_CONVERT_D2_OSR4096		0x58	/* write to this address to start temperature conversion */
 
-/* internal conversion time: 9.17 ms, so should not be read at rates higher than 100 Hz */
-#define MS5611_CONVERSION_INTERVAL	25000	/* microseconds */
+/*
+  use an OSR of 1024 to reduce the self-heating effect of the
+  sensor. Information from MS tells us that some individual sensors
+  are quite sensitive to this effect and that reducing the OSR can
+  make a big difference
+ */
+#define ADDR_CMD_CONVERT_D1			ADDR_CMD_CONVERT_D1_OSR1024
+#define ADDR_CMD_CONVERT_D2			ADDR_CMD_CONVERT_D2_OSR1024
+
+/*
+ * Maximum internal conversion time for OSR 1024 is 2.28 ms. We set an update
+ * rate of 100Hz which is be very safe not to read the ADC before the
+ * conversion finished
+ */
+#define MS5611_CONVERSION_INTERVAL	10000	/* microseconds */
 #define MS5611_MEASUREMENT_RATIO	3	/* pressure measurements per temperature measurement */
 #define MS5611_BARO_DEVICE_PATH_EXT	"/dev/ms5611_ext"
 #define MS5611_BARO_DEVICE_PATH_INT	"/dev/ms5611_int"
@@ -150,7 +173,6 @@ protected:
 	perf_counter_t		_sample_perf;
 	perf_counter_t		_measure_perf;
 	perf_counter_t		_comms_errors;
-	perf_counter_t		_buffer_overflows;
 
 	/**
 	 * Initialize the automatic measurement state machine and start it.
@@ -181,13 +203,6 @@ protected:
 	 * at the next interval.
 	 */
 	void			cycle();
-
-	/**
-	 * Get the internal / external state
-	 *
-	 * @return true if the sensor is not on the main MCU board
-	 */
-	bool			is_external() { return (_orb_class_instance == 0); /* XXX put this into the interface class */ }
 
 	/**
 	 * Static trampoline from the workq context; because we don't have a
@@ -234,8 +249,7 @@ MS5611::MS5611(device::Device *interface, ms5611::prom_u &prom_buf, const char *
 	_class_instance(-1),
 	_sample_perf(perf_alloc(PC_ELAPSED, "ms5611_read")),
 	_measure_perf(perf_alloc(PC_ELAPSED, "ms5611_measure")),
-	_comms_errors(perf_alloc(PC_COUNT, "ms5611_com_err")),
-	_buffer_overflows(perf_alloc(PC_COUNT, "ms5611_buf_of"))
+	_comms_errors(perf_alloc(PC_COUNT, "ms5611_com_err"))
 {
 	// work_cancel in stop_cycle called from the dtor will explode if we don't do this...
 	memset(&_work, 0, sizeof(_work));
@@ -267,7 +281,6 @@ MS5611::~MS5611()
 	perf_free(_sample_perf);
 	perf_free(_measure_perf);
 	perf_free(_comms_errors);
-	perf_free(_buffer_overflows);
 
 	delete _interface;
 }
@@ -378,7 +391,7 @@ MS5611::init()
 		ret = OK;
 
 		_baro_topic = orb_advertise_multi(ORB_ID(sensor_baro), &brp,
-						  &_orb_class_instance, (is_external()) ? ORB_PRIO_HIGH : ORB_PRIO_DEFAULT);
+						  &_orb_class_instance, _interface->external() ? ORB_PRIO_HIGH : ORB_PRIO_DEFAULT);
 
 		if (_baro_topic == nullptr) {
 			warnx("failed to create sensor_baro publication");
@@ -550,9 +563,6 @@ MS5611::ioctl(struct file *filp, int cmd, unsigned long arg)
 			px4_leave_critical_section(flags);
 			return OK;
 		}
-
-	case SENSORIOCGQUEUEDEPTH:
-		return _reports->size();
 
 	case SENSORIOCRESET:
 		/*
@@ -860,9 +870,7 @@ MS5611::collect()
 			orb_publish(ORB_ID(sensor_baro), _baro_topic, &report);
 		}
 
-		if (_reports->force(&report)) {
-			perf_count(_buffer_overflows);
-		}
+		_reports->force(&report);
 
 		/* notify anyone waiting for data */
 		poll_notify(POLLIN);
@@ -881,7 +889,6 @@ MS5611::print_info()
 {
 	perf_print_counter(_sample_perf);
 	perf_print_counter(_comms_errors);
-	perf_print_counter(_buffer_overflows);
 	printf("poll interval:  %u ticks\n", _measure_ticks);
 	_reports->print_info("report queue");
 	printf("device:         %s\n", _device_type == MS5611_DEVICE ? "ms5611" : "ms5607");
@@ -1340,7 +1347,8 @@ ms5611_main(int argc, char *argv[])
 				}
 			}
 
-		//no break
+		/* FALLTHROUGH */
+
 		default:
 			ms5611::usage();
 			exit(0);

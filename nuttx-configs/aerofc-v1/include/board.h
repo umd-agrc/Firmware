@@ -1,5 +1,5 @@
 /************************************************************************************
- * configs/tap-v1/include/board.h
+ * configs/aerofc-v1/include/board.h
  * include/arch/board/board.h
  *
  *   Copyright (C) 2012-2016 Gregory Nutt. All rights reserved.
@@ -35,8 +35,7 @@
  *
  ************************************************************************************/
 
-#ifndef __CONFIG_TAP_V1_INCLUDE_BOARD_H
-#define __CONFIG_TAP_V1_INCLUDE_BOARD_H
+#pragma once
 
 /************************************************************************************
  * Included Files
@@ -187,7 +186,7 @@
 #define BOARD_LED2_BIT    (1 << BOARD_LED2)
 
 /* If CONFIG_ARCH_LEDs is defined, then NuttX will control the 2 LEDs on board
- * the tap-v1.  The following definitions describe how NuttX controls
+ * the aerofc-v1.  The following definitions describe how NuttX controls
  * the LEDs:
  */
 
@@ -229,10 +228,10 @@
 #define GPIO_USART2_RTS	0 // unused
 
 // GPS
-#define GPIO_USART3_TX	GPIO_USART3_TX_1
-#define GPIO_USART3_RX	GPIO_USART3_RX_1
-#define GPIO_USART3_CTS	0 // unused
-#define GPIO_USART3_RTS	0 // unused
+#define GPIO_UART7_TX	GPIO_UART7_TX_1
+#define GPIO_UART7_RX	GPIO_UART7_RX_1
+#define GPIO_UART7_CTS	0 // unused
+#define GPIO_UART7_RTS	0 // unused
 
 // RC
 #define GPIO_UART4_TX	GPIO_UART4_TX_1
@@ -265,13 +264,12 @@
  */
 #define GPIO_I2C1_SDA GPIO_I2C1_SDA_2
 #define GPIO_I2C1_SCL GPIO_I2C1_SCL_2
-#define GPIO_I2C1_SDA_GPIO	(GPIO_OUTPUT|GPIO_OPENDRAIN|GPIO_SPEED_50MHz|GPIO_OUTPUT_SET|GPIO_PORTB|GPIO_PIN9)
-#define GPIO_I2C1_SCL_GPIO	(GPIO_OUTPUT|GPIO_OPENDRAIN|GPIO_SPEED_50MHz|GPIO_OUTPUT_SET|GPIO_PORTB|GPIO_PIN8)
+
+#define GPIO_I2C2_SDA GPIO_I2C2_SDA_1
+#define GPIO_I2C2_SCL GPIO_I2C2_SCL_1
 
 #define GPIO_I2C3_SDA		GPIO_I2C3_SDA_1
 #define GPIO_I2C3_SCL		GPIO_I2C3_SCL_1
-#define GPIO_I2C3_SDA_GPIO	(GPIO_OUTPUT|GPIO_OPENDRAIN|GPIO_SPEED_50MHz|GPIO_OUTPUT_SET|GPIO_PORTC|GPIO_PIN9)
-#define GPIO_I2C3_SCL_GPIO	(GPIO_OUTPUT|GPIO_OPENDRAIN|GPIO_SPEED_50MHz|GPIO_OUTPUT_SET|GPIO_PORTA|GPIO_PIN8)
 
 /*
  * SPI
@@ -421,4 +419,3 @@ EXTERN void stm32_boardinitialize(void);
 #endif
 
 #endif /* __ASSEMBLY__ */
-#endif  /* __CONFIG_TAP_V1_INCLUDE_BOARD_H */

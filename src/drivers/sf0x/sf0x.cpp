@@ -40,6 +40,7 @@
  */
 
 #include <px4_config.h>
+#include <px4_getopt.h>
 
 #include <sys/types.h>
 #include <stdint.h>
@@ -89,7 +90,7 @@
 class SF0X : public device::CDev
 {
 public:
-	SF0X(const char *port = SF0X_DEFAULT_PORT);
+	SF0X(const char *port = SF0X_DEFAULT_PORT, uint8_t rotation = distance_sensor_s::ROTATION_DOWNWARD_FACING);
 	virtual ~SF0X();
 
 	virtual int 			init();
@@ -107,6 +108,7 @@ protected:
 
 private:
 	char 				_port[20];
+	uint8_t _rotation;
 	float				_min_distance;
 	float				_max_distance;
 	int                 _conversion_interval;
@@ -130,7 +132,6 @@ private:
 
 	perf_counter_t			_sample_perf;
 	perf_counter_t			_comms_errors;
-	perf_counter_t			_buffer_overflows;
 
 	/**
 	* Initialise the automatic measurement state machine and start it.
@@ -178,8 +179,9 @@ private:
  */
 extern "C" __EXPORT int sf0x_main(int argc, char *argv[]);
 
-SF0X::SF0X(const char *port) :
+SF0X::SF0X(const char *port, uint8_t rotation) :
 	CDev("SF0X", RANGE_FINDER0_DEVICE_PATH),
+	_rotation(rotation),
 	_min_distance(0.30f),
 	_max_distance(40.0f),
 	_conversion_interval(83334),
@@ -196,8 +198,7 @@ SF0X::SF0X(const char *port) :
 	_distance_sensor_topic(nullptr),
 	_consecutive_fail_count(0),
 	_sample_perf(perf_alloc(PC_ELAPSED, "sf0x_read")),
-	_comms_errors(perf_alloc(PC_COUNT, "sf0x_com_err")),
-	_buffer_overflows(perf_alloc(PC_COUNT, "sf0x_buf_of"))
+	_comms_errors(perf_alloc(PC_COUNT, "sf0x_com_err"))
 {
 	/* store port name */
 	strncpy(_port, port, sizeof(_port));
@@ -262,7 +263,6 @@ SF0X::~SF0X()
 
 	perf_free(_sample_perf);
 	perf_free(_comms_errors);
-	perf_free(_buffer_overflows);
 }
 
 int
@@ -472,24 +472,9 @@ SF0X::ioctl(struct file *filp, int cmd, unsigned long arg)
 			return OK;
 		}
 
-	case SENSORIOCGQUEUEDEPTH:
-		return _reports->size();
-
 	case SENSORIOCRESET:
 		/* XXX implement this */
 		return -EINVAL;
-
-	case RANGEFINDERIOCSETMINIUMDISTANCE: {
-			set_minimum_distance(*(float *)arg);
-			return 0;
-		}
-		break;
-
-	case RANGEFINDERIOCSETMAXIUMDISTANCE: {
-			set_maximum_distance(*(float *)arg);
-			return 0;
-		}
-		break;
 
 	default:
 		/* give it to the superclass */
@@ -634,7 +619,7 @@ SF0X::collect()
 
 	report.timestamp = hrt_absolute_time();
 	report.type = distance_sensor_s::MAV_DISTANCE_SENSOR_LASER;
-	report.orientation = 8;
+	report.orientation = _rotation;
 	report.current_distance = distance_m;
 	report.min_distance = get_minimum_distance();
 	report.max_distance = get_maximum_distance();
@@ -645,9 +630,7 @@ SF0X::collect()
 	/* publish it */
 	orb_publish(ORB_ID(distance_sensor), _distance_sensor_topic, &report);
 
-	if (_reports->force(&report)) {
-		perf_count(_buffer_overflows);
-	}
+	_reports->force(&report);
 
 	/* notify anyone waiting for data */
 	poll_notify(POLLIN);
@@ -782,7 +765,6 @@ SF0X::print_info()
 {
 	perf_print_counter(_sample_perf);
 	perf_print_counter(_comms_errors);
-	perf_print_counter(_buffer_overflows);
 	printf("poll interval:  %d ticks\n", _measure_ticks);
 	_reports->print_info("report queue");
 }
@@ -795,7 +777,7 @@ namespace sf0x
 
 SF0X	*g_dev;
 
-void	start(const char *port);
+void	start(const char *port, uint8_t rotation);
 void	stop();
 void	test();
 void	reset();
@@ -805,7 +787,7 @@ void	info();
  * Start the driver.
  */
 void
-start(const char *port)
+start(const char *port, uint8_t rotation)
 {
 	int fd;
 
@@ -814,7 +796,7 @@ start(const char *port)
 	}
 
 	/* create the driver */
-	g_dev = new SF0X(port);
+	g_dev = new SF0X(port, rotation);
 
 	if (g_dev == nullptr) {
 		goto fail;
@@ -978,43 +960,62 @@ info()
 int
 sf0x_main(int argc, char *argv[])
 {
+	// check for optional arguments
+	int ch;
+	uint8_t rotation = distance_sensor_s::ROTATION_DOWNWARD_FACING;
+	int myoptind = 1;
+	const char *myoptarg = NULL;
+
+
+	while ((ch = px4_getopt(argc, argv, "R:", &myoptind, &myoptarg)) != EOF) {
+		switch (ch) {
+		case 'R':
+			rotation = (uint8_t)atoi(myoptarg);
+			PX4_INFO("Setting distance sensor orientation to %d", (int)rotation);
+			break;
+
+		default:
+			PX4_WARN("Unknown option!");
+		}
+	}
+
 	/*
 	 * Start/load the driver.
 	 */
-	if (!strcmp(argv[1], "start")) {
-		if (argc > 2) {
-			sf0x::start(argv[2]);
+	if (!strcmp(argv[myoptind], "start")) {
+		if (argc > myoptind + 1) {
+			sf0x::start(argv[myoptind + 1], rotation);
 
 		} else {
-			sf0x::start(SF0X_DEFAULT_PORT);
+			sf0x::start(SF0X_DEFAULT_PORT, rotation);
 		}
 	}
 
 	/*
 	 * Stop the driver
 	 */
-	if (!strcmp(argv[1], "stop")) {
+	if (!strcmp(argv[myoptind], "stop")) {
 		sf0x::stop();
 	}
 
 	/*
 	 * Test the driver/device.
 	 */
-	if (!strcmp(argv[1], "test")) {
+	if (!strcmp(argv[myoptind], "test")) {
 		sf0x::test();
 	}
 
 	/*
 	 * Reset the driver.
 	 */
-	if (!strcmp(argv[1], "reset")) {
+	if (!strcmp(argv[myoptind], "reset")) {
 		sf0x::reset();
 	}
 
 	/*
 	 * Print driver information.
 	 */
-	if (!strcmp(argv[1], "info") || !strcmp(argv[1], "status")) {
+	if (!strcmp(argv[myoptind], "info") || !strcmp(argv[1], "status")) {
 		sf0x::info();
 	}
 

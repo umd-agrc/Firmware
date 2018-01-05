@@ -1,3 +1,6 @@
+include(common/px4_git)
+px4_add_git_submodule(TARGET git_cmake_hexagon PATH "cmake/cmake_hexagon")
+
 include(qurt/px4_impl_qurt)
 
 if ("$ENV{HEXAGON_SDK_ROOT}" STREQUAL "")
@@ -8,14 +11,19 @@ endif()
 
 set(CONFIG_SHMEM "1")
 
-set(config_generate_parameters_scope ALL)
-
 # Get $QC_SOC_TARGET from environment if existing.
 if (DEFINED ENV{QC_SOC_TARGET})
 	set(QC_SOC_TARGET $ENV{QC_SOC_TARGET})
 else()
 	set(QC_SOC_TARGET "APQ8074")
 endif()
+
+# Disable the creation of the parameters.xml file by scanning individual
+# source files, and scan all source files.  This will create a parameters.xml
+# file that contains all possible parameters, even if the associated module
+# is not used.  This is necessary for parameter synchronization between the 
+# ARM and DSP processors.
+set(DISABLE_PARAMS_MODULE_SCOPING TRUE)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PX4_SOURCE_DIR}/cmake/cmake_hexagon")
 include(toolchain/Toolchain-qurt)
@@ -57,9 +65,8 @@ set(config_module_list
 	#
 	# Library modules
 	#
-	modules/param
+	modules/systemlib/param
 	modules/systemlib
-	modules/systemlib/mixer
 	modules/uORB
 	modules/commander
 	modules/land_detector
@@ -80,18 +87,19 @@ set(config_module_list
 	# Libraries
 	#
 	lib/controllib
+	lib/conversion
+	lib/DriverFramework/framework
+	lib/ecl
+	lib/geo
+	lib/geo_lookup
 	lib/mathlib
 	lib/mathlib/math/filter
-	lib/geo
-	lib/ecl
-	lib/geo_lookup
-	lib/conversion
-	lib/terrain_estimation
+	lib/mixer
+	lib/rc
 	lib/runway_takeoff
 	lib/tailsitter_recovery
-	lib/rc
+	lib/terrain_estimation
 	lib/version
-	lib/DriverFramework/framework
 
 	#
 	# QuRT port

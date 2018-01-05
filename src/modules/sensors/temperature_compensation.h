@@ -40,6 +40,8 @@
  * @author Beat Küng <beat-kueng@gmx.net>
  */
 
+#pragma once
+
 #include <systemlib/param/param.h>
 #include <mathlib/mathlib.h>
 
@@ -49,8 +51,12 @@
 namespace sensors
 {
 
-static_assert(SENSOR_COUNT_MAX == 3,
-	      "SENSOR_COUNT_MAX must be 3 (if changed, add/remove TC_* params to match the count)");
+static_assert(GYRO_COUNT_MAX == 3,
+	      "GYRO_COUNT_MAX must be 3 (if changed, add/remove TC_* params to match the count)");
+static_assert(ACCEL_COUNT_MAX == 3,
+	      "ACCEL_COUNT_MAX must be 3 (if changed, add/remove TC_* params to match the count)");
+static_assert(BARO_COUNT_MAX == 3,
+	      "BARO_COUNT_MAX must be 3 (if changed, add/remove TC_* params to match the count)");
 
 /**
  ** class TemperatureCompensation
@@ -112,7 +118,7 @@ private:
 
 	*/
 	struct SensorCalData1D {
-		int ID;
+		int32_t ID;
 		float x5;
 		float x4;
 		float x3;
@@ -156,7 +162,7 @@ private:
 
 	 */
 	struct SensorCalData3D {
-		int ID;			/**< sensor device ID*/
+		int32_t ID;		/**< sensor device ID*/
 		float x3[3];		/**< x^3 term of polynomial */
 		float x2[3];		/**< x^2 term of polynomial */
 		float x1[3];		/**< x^1 term of polynomial */
@@ -181,22 +187,22 @@ private:
 
 	// create a struct containing all thermal calibration parameters
 	struct Parameters {
-		int gyro_tc_enable;
-		SensorCalData3D gyro_cal_data[SENSOR_COUNT_MAX];
-		int accel_tc_enable;
-		SensorCalData3D accel_cal_data[SENSOR_COUNT_MAX];
-		int baro_tc_enable;
-		SensorCalData1D baro_cal_data[SENSOR_COUNT_MAX];
+		int32_t gyro_tc_enable;
+		SensorCalData3D gyro_cal_data[GYRO_COUNT_MAX];
+		int32_t accel_tc_enable;
+		SensorCalData3D accel_cal_data[ACCEL_COUNT_MAX];
+		int32_t baro_tc_enable;
+		SensorCalData1D baro_cal_data[BARO_COUNT_MAX];
 	};
 
 	// create a struct containing the handles required to access all calibration parameters
 	struct ParameterHandles {
 		param_t gyro_tc_enable;
-		SensorCalHandles3D gyro_cal_handles[SENSOR_COUNT_MAX];
+		SensorCalHandles3D gyro_cal_handles[GYRO_COUNT_MAX];
 		param_t accel_tc_enable;
-		SensorCalHandles3D accel_cal_handles[SENSOR_COUNT_MAX];
+		SensorCalHandles3D accel_cal_handles[ACCEL_COUNT_MAX];
 		param_t baro_tc_enable;
-		SensorCalHandles1D baro_cal_handles[SENSOR_COUNT_MAX];
+		SensorCalHandles1D baro_cal_handles[BARO_COUNT_MAX];
 	};
 
 
@@ -268,7 +274,7 @@ private:
 
 	template<typename T>
 	static inline int set_sensor_id(uint32_t device_id, int topic_instance, PerSensorData &sensor_data,
-					const T *sensor_cal_data);
+					const T *sensor_cal_data, uint8_t sensor_count_max);
 };
 
 }

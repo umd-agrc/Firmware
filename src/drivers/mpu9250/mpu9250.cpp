@@ -90,7 +90,8 @@
  */
 #define MPU9250_TIMER_REDUCTION				200
 
-
+/* Set accel range used */
+#define ACCEL_RANGE_G  16
 /*
   list of registers that will be checked in check_registers(). Note
   that MPUREG_PRODUCT_ID must be first in the list.
@@ -217,6 +218,9 @@ MPU9250::~MPU9250()
 	/* make sure we are truly inactive */
 	stop();
 
+	orb_unadvertise(_accel_topic);
+	orb_unadvertise(_gyro->_gyro_topic);
+
 	/* delete the gyro subdriver */
 	delete _gyro;
 
@@ -256,14 +260,12 @@ MPU9250::init()
 	use_i2c(_interface->ioctl(MPUIOCGIS_I2C, dummy));
 #endif
 
-
 	int ret = probe();
 
 	if (ret != OK) {
 		DEVICE_DEBUG("MPU9250 probe failed");
 		return ret;
 	}
-
 
 	/* do init */
 
@@ -275,24 +277,23 @@ MPU9250::init()
 		return ret;
 	}
 
-
-
-
 	/* allocate basic report buffers */
 	_accel_reports = new ringbuffer::RingBuffer(2, sizeof(accel_report));
+	ret = -ENOMEM;
 
 	if (_accel_reports == nullptr) {
-		goto out;
+		return ret;
 	}
 
 	_gyro_reports = new ringbuffer::RingBuffer(2, sizeof(gyro_report));
 
 	if (_gyro_reports == nullptr) {
-		goto out;
+		return ret;
 	}
 
-	if (reset() != OK) {
-		goto out;
+	if (reset_mpu() != OK) {
+		PX4_ERR("Exiting! Device failed to take initialization");
+		return ret;
 	}
 
 	/* Initialize offsets and scales */
@@ -310,6 +311,35 @@ MPU9250::init()
 	_gyro_scale.z_offset = 0;
 	_gyro_scale.z_scale  = 1.0f;
 
+	// set software low pass filter for controllers
+	param_t accel_cut_ph = param_find("IMU_ACCEL_CUTOFF");
+	float accel_cut = MPU9250_ACCEL_DEFAULT_DRIVER_FILTER_FREQ;
+
+	if (accel_cut_ph != PARAM_INVALID && (param_get(accel_cut_ph, &accel_cut) == PX4_OK)) {
+		PX4_INFO("accel cutoff set to %.2f Hz", double(accel_cut));
+
+		_accel_filter_x.set_cutoff_frequency(MPU9250_ACCEL_DEFAULT_RATE, accel_cut);
+		_accel_filter_y.set_cutoff_frequency(MPU9250_ACCEL_DEFAULT_RATE, accel_cut);
+		_accel_filter_z.set_cutoff_frequency(MPU9250_ACCEL_DEFAULT_RATE, accel_cut);
+
+	} else {
+		PX4_ERR("IMU_ACCEL_CUTOFF param invalid");
+	}
+
+	param_t gyro_cut_ph = param_find("IMU_GYRO_CUTOFF");
+	float gyro_cut = MPU9250_GYRO_DEFAULT_DRIVER_FILTER_FREQ;
+
+	if (gyro_cut_ph != PARAM_INVALID && (param_get(gyro_cut_ph, &gyro_cut) == PX4_OK)) {
+		PX4_INFO("gyro cutoff set to %.2f Hz", double(gyro_cut));
+
+		_gyro_filter_x.set_cutoff_frequency(MPU9250_GYRO_DEFAULT_RATE, gyro_cut);
+		_gyro_filter_y.set_cutoff_frequency(MPU9250_GYRO_DEFAULT_RATE, gyro_cut);
+		_gyro_filter_z.set_cutoff_frequency(MPU9250_GYRO_DEFAULT_RATE, gyro_cut);
+
+	} else {
+		PX4_ERR("IMU_GYRO_CUTOFF param invalid");
+	}
+
 	/* do CDev init for the gyro device node, keep it optional */
 	ret = _gyro->init();
 
@@ -321,20 +351,33 @@ MPU9250::init()
 
 #ifdef USE_I2C
 
-	if (!_mag->is_passthrough() && _mag->_interface->init() != OK) {
-		warnx("failed to setup ak8963 interface");
+	if (!_mag->is_passthrough() && _mag->_interface->init() != PX4_OK) {
+		PX4_ERR("failed to setup ak8963 interface");
 	}
 
-#endif
+#endif /* USE_I2C */
 
 	/* do CDev init for the mag device node, keep it optional */
-	ret = _mag->init();
+	if (_whoami == MPU_WHOAMI_9250) {
+		ret = _mag->init();
+	}
 
 	/* if probe/setup failed, bail now */
 	if (ret != OK) {
 		DEVICE_DEBUG("mag init failed");
 		return ret;
 	}
+
+
+	if (_whoami == MPU_WHOAMI_9250) {
+		ret = _mag->ak8963_reset();
+	}
+
+	if (ret != OK) {
+		DEVICE_DEBUG("mag reset failed");
+		return ret;
+	}
+
 
 	_accel_class_instance = register_class_devname(ACCEL_BASE_DEVICE_PATH);
 
@@ -349,7 +392,8 @@ MPU9250::init()
 					   &_accel_orb_class_instance, (is_external()) ? ORB_PRIO_MAX - 1 : ORB_PRIO_HIGH - 1);
 
 	if (_accel_topic == nullptr) {
-		warnx("ADVERT FAIL");
+		PX4_ERR("ADVERT FAIL");
+		return ret;
 	}
 
 	/* advertise sensor topic, measure manually to initialize valid report */
@@ -360,37 +404,70 @@ MPU9250::init()
 			     &_gyro->_gyro_orb_class_instance, (is_external()) ? ORB_PRIO_MAX - 1 : ORB_PRIO_HIGH - 1);
 
 	if (_gyro->_gyro_topic == nullptr) {
-		warnx("ADVERT FAIL");
+		PX4_ERR("ADVERT FAIL");
+		return ret;
 	}
 
-out:
 	return ret;
 }
 
 int MPU9250::reset()
 {
+	irqstate_t state;
+
+	/* When the mpu9250 starts from 0V the internal power on circuit
+	 * per the data sheet will require:
+	 *
+	 * Start-up time for register read/write From power-up Typ:11 max:100 ms
+	 *
+	 */
+
+	usleep(110000);
+
+	// Hold off sampling until done (100 MS will be shortened)
+	state = px4_enter_critical_section();
+	_reset_wait = hrt_absolute_time() + 100000;
+	px4_leave_critical_section(state);
+
+	int ret;
+
+	ret = reset_mpu();
+
+	if (ret == OK && _whoami == MPU_WHOAMI_9250) {
+		ret = _mag->ak8963_reset();
+	}
+
+
+	state = px4_enter_critical_section();
+	_reset_wait = hrt_absolute_time() + 10;
+	px4_leave_critical_section(state);
+
+	return ret;
+}
+
+int MPU9250::reset_mpu()
+{
 	write_reg(MPUREG_PWR_MGMT_1, BIT_H_RESET);
-	up_udelay(10000);
-
 	write_checked_reg(MPUREG_PWR_MGMT_1, MPU_CLK_SEL_AUTO);
-	up_udelay(1000);
-
 	write_checked_reg(MPUREG_PWR_MGMT_2, 0);
-	up_udelay(1000);
+
+
+	usleep(1000);
+
+	// Enable I2C bus or Disable I2C bus (recommended on data sheet)
+
+	write_checked_reg(MPUREG_USER_CTRL, is_i2c() ? 0 : BIT_I2C_IF_DIS);
 
 	// SAMPLE RATE
 	_set_sample_rate(_sample_rate);
-	usleep(1000);
 
 	// FS & DLPF   FS=2000 deg/s, DLPF = 20Hz (low pass filter)
 	// was 90 Hz, but this ruins quality and does not improve the
 	// system response
 	_set_dlpf_filter(MPU9250_DEFAULT_ONCHIP_FILTER_FREQ);
-	usleep(1000);
 
 	// Gyro scale 2000 deg/s ()
 	write_checked_reg(MPUREG_GYRO_CONFIG, BITS_FS_2000DPS);
-	usleep(1000);
 
 	// correct gyro scale factors
 	// scale to rad/s in SI units
@@ -400,45 +477,49 @@ int MPU9250::reset()
 	_gyro_range_scale = (0.0174532 / 16.4);//1.0f / (32768.0f * (2000.0f / 180.0f) * M_PI_F);
 	_gyro_range_rad_s = (2000.0f / 180.0f) * M_PI_F;
 
-	set_accel_range(16);
-
-	usleep(1000);
+	set_accel_range(ACCEL_RANGE_G);
 
 	// INT CFG => Interrupt on Data Ready
 	write_checked_reg(MPUREG_INT_ENABLE, BIT_RAW_RDY_EN);        // INT: Raw data ready
-	usleep(1000);
 
 #ifdef USE_I2C
 	bool bypass = !_mag->is_passthrough();
 #else
 	bool bypass = false;
 #endif
-	write_checked_reg(MPUREG_INT_PIN_CFG,
-			  BIT_INT_ANYRD_2CLEAR | (bypass ? BIT_INT_BYPASS_EN :
-					  0)); // INT: Clear on any read, also use i2c bypass is master mode isn't needed
-	usleep(1000);
+
+	/* INT: Clear on any read.
+	 * If this instance is for a device is on I2C bus the Mag will have an i2c interface
+	 * that it will use to access the either: a) the internal mag device on the internal I2C bus
+	 * or b) it could be used to access a downstream I2C devices connected to the chip on
+	 * it's AUX_{ASD|SCL} pins. In either case we need to disconnect (bypass) the internal master
+	 * controller that chip provides as a SPI to I2C bridge.
+	 * so bypass is true if the mag has an i2c non null interfaces.
+	 */
+
+	write_checked_reg(MPUREG_INT_PIN_CFG, BIT_INT_ANYRD_2CLEAR | (bypass ? BIT_INT_BYPASS_EN : 0));
 
 	write_checked_reg(MPUREG_ACCEL_CONFIG2, BITS_ACCEL_CONFIG2_41HZ);
-	usleep(1000);
 
-	uint8_t retries = 10;
+	uint8_t retries = 3;
+	bool all_ok = false;
 
-	while (retries--) {
-		bool all_ok = true;
+	while (!all_ok && retries--) {
+
+		// Assume all checked values are as expected
+		all_ok = true;
+		uint8_t reg;
 
 		for (uint8_t i = 0; i < MPU9250_NUM_CHECKED_REGISTERS; i++) {
-			if (read_reg(_checked_registers[i]) != _checked_values[i]) {
+			if ((reg = read_reg(_checked_registers[i])) != _checked_values[i]) {
 				write_reg(_checked_registers[i], _checked_values[i]);
+				PX4_ERR("Reg %d is:%d s/b:%d Tries:%d", _checked_registers[i], reg, _checked_values[i], retries);
 				all_ok = false;
 			}
 		}
-
-		if (all_ok) {
-			break;
-		}
 	}
 
-	return OK;
+	return all_ok ? OK : -EIO;
 }
 
 int
@@ -450,6 +531,7 @@ MPU9250::probe()
 	// verify product revision
 	switch (_whoami) {
 	case MPU_WHOAMI_9250:
+	case MPU_WHOAMI_6500:
 		memset(_checked_values, 0, sizeof(_checked_values));
 		memset(_checked_bad, 0, sizeof(_checked_bad));
 		_checked_values[0] = _whoami;
@@ -704,8 +786,9 @@ MPU9250::ioctl(struct file *filp, int cmd, unsigned long arg)
 {
 	switch (cmd) {
 
-	case SENSORIOCRESET:
-		return reset();
+	case SENSORIOCRESET: {
+			return reset();
+		}
 
 	case SENSORIOCSPOLLRATE: {
 			switch (arg) {
@@ -805,24 +888,11 @@ MPU9250::ioctl(struct file *filp, int cmd, unsigned long arg)
 			return OK;
 		}
 
-	case SENSORIOCGQUEUEDEPTH:
-		return _accel_reports->size();
-
 	case ACCELIOCGSAMPLERATE:
 		return _sample_rate;
 
 	case ACCELIOCSSAMPLERATE:
 		_set_sample_rate(arg);
-		return OK;
-
-	case ACCELIOCGLOWPASS:
-		return _accel_filter_x.get_cutoff_freq();
-
-	case ACCELIOCSLOWPASS:
-		// set software filtering
-		_accel_filter_x.set_cutoff_frequency(1.0e6f / _call_interval, arg);
-		_accel_filter_y.set_cutoff_frequency(1.0e6f / _call_interval, arg);
-		_accel_filter_z.set_cutoff_frequency(1.0e6f / _call_interval, arg);
 		return OK;
 
 	case ACCELIOCSSCALE: {
@@ -852,19 +922,6 @@ MPU9250::ioctl(struct file *filp, int cmd, unsigned long arg)
 
 	case ACCELIOCSELFTEST:
 		return accel_self_test();
-
-#ifdef ACCELIOCSHWLOWPASS
-
-	case ACCELIOCSHWLOWPASS:
-		_set_dlpf_filter(arg);
-		return OK;
-#endif
-
-#ifdef ACCELIOCGHWLOWPASS
-
-	case ACCELIOCGHWLOWPASS:
-		return _dlpf_freq;
-#endif
 
 	default:
 		/* give it to the superclass */
@@ -901,24 +958,11 @@ MPU9250::gyro_ioctl(struct file *filp, int cmd, unsigned long arg)
 			return OK;
 		}
 
-	case SENSORIOCGQUEUEDEPTH:
-		return _gyro_reports->size();
-
 	case GYROIOCGSAMPLERATE:
 		return _sample_rate;
 
 	case GYROIOCSSAMPLERATE:
 		_set_sample_rate(arg);
-		return OK;
-
-	case GYROIOCGLOWPASS:
-		return _gyro_filter_x.get_cutoff_freq();
-
-	case GYROIOCSLOWPASS:
-		// set software filtering
-		_gyro_filter_x.set_cutoff_frequency(1.0e6f / _call_interval, arg);
-		_gyro_filter_y.set_cutoff_frequency(1.0e6f / _call_interval, arg);
-		_gyro_filter_z.set_cutoff_frequency(1.0e6f / _call_interval, arg);
 		return OK;
 
 	case GYROIOCSSCALE:
@@ -943,19 +987,6 @@ MPU9250::gyro_ioctl(struct file *filp, int cmd, unsigned long arg)
 
 	case GYROIOCSELFTEST:
 		return gyro_self_test();
-
-#ifdef GYROIOCSHWLOWPASS
-
-	case GYROIOCSHWLOWPASS:
-		_set_dlpf_filter(arg);
-		return OK;
-#endif
-
-#ifdef GYROIOCGHWLOWPASS
-
-	case GYROIOCGHWLOWPASS:
-		return _dlpf_freq;
-#endif
 
 	default:
 		/* give it to the superclass */
@@ -999,6 +1030,17 @@ MPU9250::modify_reg(unsigned reg, uint8_t clearbits, uint8_t setbits)
 	val &= ~clearbits;
 	val |= setbits;
 	write_reg(reg, val);
+}
+
+void
+MPU9250::modify_checked_reg(unsigned reg, uint8_t clearbits, uint8_t setbits)
+{
+	uint8_t	val;
+
+	val = read_reg(reg);
+	val &= ~clearbits;
+	val |= setbits;
+	write_checked_reg(reg, val);
 }
 
 void
@@ -1066,7 +1108,7 @@ MPU9250::start()
 		hrt_call_every(&_call,
 			       1000,
 			       _call_interval - MPU9250_TIMER_REDUCTION,
-			       (hrt_callout)&MPU9250::measure_trampoline, this);;
+			       (hrt_callout)&MPU9250::measure_trampoline, this);
 
 	} else {
 #ifdef USE_I2C
@@ -1208,7 +1250,7 @@ bool MPU9250::check_null_data(uint32_t *data, uint8_t size)
 	perf_end(_sample_perf);
 	// note that we don't call reset() here as a reset()
 	// costs 20ms with interrupts disabled. That means if
-	// the mpu6k does go bad it would cause a FMU failure,
+	// the mpu9250 does go bad it would cause a FMU failure,
 	// regardless of whether another sensor is available,
 	return true;
 }
@@ -1266,6 +1308,7 @@ MPU9250::measure()
 	if (OK != _interface->read(MPU9250_SET_SPEED(MPUREG_INT_STATUS, MPU9250_HIGH_BUS_SPEED),
 				   (uint8_t *)&mpu_report,
 				   sizeof(mpu_report))) {
+		perf_end(_sample_perf);
 		return;
 	}
 
@@ -1498,6 +1541,10 @@ MPU9250::print_info()
 	}
 
 	::printf("temperature: %.1f\n", (double)_last_temperature);
+	float accel_cut = _accel_filter_x.get_cutoff_freq();
+	::printf("accel cutoff set to %10.2f Hz\n", double(accel_cut));
+	float gyro_cut = _gyro_filter_x.get_cutoff_freq();
+	::printf("gyro cutoff set to %10.2f Hz\n", double(gyro_cut));
 }
 
 void

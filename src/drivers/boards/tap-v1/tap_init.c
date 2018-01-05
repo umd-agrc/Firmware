@@ -55,7 +55,7 @@
 #include <debug.h>
 #include <errno.h>
 
-#include <nuttx/arch.h>
+#include "platform/cxxinitialize.h"
 #include <nuttx/board.h>
 #include <nuttx/analog/adc.h>
 
@@ -65,13 +65,14 @@
 #include <arch/board/board.h>
 
 #include <drivers/drv_hrt.h>
-#include <drivers/drv_led.h>
+#include <drivers/drv_board_led.h>
 
 #include <systemlib/px4_macros.h>
 #include <systemlib/cpuload.h>
 #include <systemlib/err.h>
 #include <systemlib/hardfault_log.h>
 #include <systemlib/systemlib.h>
+#include <systemlib/param/param.h>
 
 # if defined(FLASH_BASED_PARAMS)
 #  include <systemlib/flashparams/flashfs.h>
@@ -199,6 +200,8 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 	/* configure the high-resolution time/callout interface */
 	hrt_init();
+
+	param_init();
 
 	/* configure the DMA allocator */
 
@@ -366,13 +369,6 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	drv_led_start();
 	led_off(LED_AMBER);
 	led_off(LED_BLUE);
-
-	result = board_i2c_initialize();
-
-	if (result != OK) {
-		led_on(LED_AMBER);
-		return -ENODEV;
-	}
 
 #if defined(FLASH_BASED_PARAMS)
 	static sector_descriptor_t  sector_map[] = {

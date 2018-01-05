@@ -96,15 +96,14 @@ const struct {
 	{"mavlink",		mavlink_tests_main,	0},
 	{"mc_pos_control",	mc_pos_control_tests_main,	0},
 	{"sf0x",		sf0x_tests_main,	0},
-#ifndef __PX4_DARWIN
 	{"uorb",		uorb_tests_main,	0},
 	{"hysteresis",		test_hysteresis,	0},
-#endif /* __PX4_DARWIN */
+
 	{"mixer",		test_mixer,	OPT_NOJIGTEST},
 	{"autodeclination",	test_autodeclination,	0},
 	{"bson",		test_bson,	0},
 	{"conv",		test_conv, 0},
-	//{"dataman",		test_dataman, OPT_NOJIGTEST | OPT_NOALLTEST}, // Enable for by hand testing
+	{"dataman",		test_dataman, OPT_NOJIGTEST | OPT_NOALLTEST},
 	{"file2",		test_file2,	OPT_NOJIGTEST},
 	{"float",		test_float,	0},
 	{"gpio",		test_gpio,	OPT_NOJIGTEST | OPT_NOALLTEST},
@@ -116,6 +115,7 @@ const struct {
 	{"matrix",		test_matrix,	0},
 	{"mount",		test_mount,	OPT_NOJIGTEST | OPT_NOALLTEST},
 	{"param",		test_param,	0},
+	{"parameters",	test_parameters,	0},
 	{"perf",		test_perf,	OPT_NOJIGTEST},
 	{"ppm",			test_ppm,	OPT_NOJIGTEST | OPT_NOALLTEST},
 	{"ppm_loopback",	test_ppm_loopback,	OPT_NOALLTEST},
@@ -125,6 +125,7 @@ const struct {
 	{"tone",		test_tone,	0},
 	{"uart_loopback",	test_uart_loopback,	OPT_NOJIGTEST | OPT_NOALLTEST},
 	{"uart_send",		test_uart_send,	OPT_NOJIGTEST | OPT_NOALLTEST},
+	{"versioning",		test_versioning,	0},
 	{NULL,			NULL, 		0}
 };
 

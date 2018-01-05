@@ -43,16 +43,14 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// Hack until everything is using this header
-#include <systemlib/visibility.h>
 
 /**
  * Object metadata.
  */
 struct orb_metadata {
 	const char *o_name;		/**< unique object name */
-	const size_t o_size;		/**< object size */
-	const size_t o_size_no_padding;	/**< object size w/o padding at the end (for logger) */
+	const uint16_t o_size;		/**< object size */
+	const uint16_t o_size_no_padding;	/**< object size w/o padding at the end (for logger) */
 	const char *o_fields;		/**< semicolon separated list of fields (with type) */
 };
 

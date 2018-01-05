@@ -35,6 +35,7 @@
 #include "logger.h"
 #include "messages.h"
 
+#include <dirent.h>
 #include <sys/stat.h>
 #include <errno.h>
 #include <string.h>
@@ -48,14 +49,15 @@
 #include <uORB/topics/parameter_update.h>
 #include <uORB/topics/vehicle_status.h>
 #include <uORB/topics/vehicle_gps_position.h>
-#include <uORB/topics/vehicle_command.h>
 #include <uORB/topics/vehicle_command_ack.h>
 
 #include <drivers/drv_hrt.h>
 #include <px4_includes.h>
 #include <px4_getopt.h>
 #include <px4_log.h>
+#include <px4_posix.h>
 #include <px4_sem.h>
+#include <px4_shutdown.h>
 #include <px4_tasks.h>
 #include <systemlib/mavlink_log.h>
 #include <replay/definitions.hpp>
@@ -86,9 +88,6 @@
 
 using namespace px4::logger;
 
-static Logger *logger_ptr = nullptr;
-static int logger_task = -1;
-
 /* This is used to schedule work for the logger (periodic scan for updated topics) */
 static void timer_callback(void *arg)
 {
@@ -107,75 +106,7 @@ int logger_main(int argc, char *argv[])
 		return 1;
 	}
 
-	if (argc < 2) {
-		PX4_INFO("usage: logger {start|stop|status}");
-		return 1;
-	}
-
-	//Check if thread exited, but the object has not been destroyed yet (happens in case of an error)
-	if (logger_task == -1 && logger_ptr) {
-		delete logger_ptr;
-		logger_ptr = nullptr;
-	}
-
-	if (!strcmp(argv[1], "start")) {
-
-		if (logger_ptr != nullptr) {
-			PX4_INFO("already running");
-			return 1;
-		}
-
-		if (OK != Logger::start((char *const *)argv)) {
-			PX4_WARN("start failed");
-			return 1;
-		}
-
-		return 0;
-	}
-
-	if (!strcmp(argv[1], "on")) {
-		if (logger_ptr != nullptr) {
-			logger_ptr->set_arm_override(true);
-			return 0;
-		}
-
-		return 1;
-	}
-
-	if (!strcmp(argv[1], "off")) {
-		if (logger_ptr != nullptr) {
-			logger_ptr->set_arm_override(false);
-			return 0;
-		}
-
-		return 1;
-	}
-
-	if (!strcmp(argv[1], "stop")) {
-		if (logger_ptr == nullptr) {
-			PX4_INFO("not running");
-			return 1;
-		}
-
-		logger_ptr->print_statistics();
-		delete logger_ptr;
-		logger_ptr = nullptr;
-		return 0;
-	}
-
-	if (!strcmp(argv[1], "status")) {
-		if (logger_ptr) {
-			logger_ptr->status();
-			return 0;
-
-		} else {
-			PX4_INFO("not running");
-			return 1;
-		}
-	}
-
-	Logger::usage("unrecognized command");
-	return 1;
+	return Logger::main(argc, argv);
 }
 
 namespace px4
@@ -183,55 +114,117 @@ namespace px4
 namespace logger
 {
 
-void Logger::usage(const char *reason)
+int Logger::custom_command(int argc, char *argv[])
+{
+	if (!is_running()) {
+		print_usage("logger not running");
+		return 1;
+	}
+
+	if (!strcmp(argv[0], "on")) {
+		get_instance()->set_arm_override(true);
+		return 0;
+	}
+
+	if (!strcmp(argv[0], "off")) {
+		get_instance()->set_arm_override(false);
+		return 0;
+	}
+
+	return print_usage("unknown command");
+}
+
+int Logger::print_usage(const char *reason)
 {
 	if (reason) {
 		PX4_WARN("%s\n", reason);
 	}
 
-	PX4_INFO("usage: logger {start|stop|on|off|status} [-r <log rate>] [-b <buffer size>] -e -a -t -x -m <mode> -q <size>\n"
-		 "\t-r\tLog rate in Hz, 0 means unlimited rate\n"
-		 "\t-b\tLog buffer size in KiB, default is 12\n"
-		 "\t-e\tEnable logging right after start until disarm (otherwise only when armed)\n"
-		 "\t-f\tLog until shutdown (implies -e)\n"
-		 "\t-t\tUse date/time for naming log directories and files\n"
-		 "\t-m\tMode: one of 'file', 'mavlink', 'all' (default=all)\n"
-		 "\t-q\tuORB queue size for mavlink mode");
+	PRINT_MODULE_DESCRIPTION(
+		R"DESCR_STR(
+### Description
+System logger which logs a configurable set of uORB topics and system printf messages
+(`PX4_WARN` and `PX4_ERR`) to ULog files. These can be used for system and flight performance evaluation,
+tuning, replay and crash analysis.
+
+It supports 2 backends:
+- Files: write ULog files to the file system (SD card)
+- MAVLink: stream ULog data via MAVLink to a client (the client must support this)
+
+Both backends can be enabled and used at the same time.
+
+### Implementation
+The implementation uses two threads:
+- The main thread, running at a fixed rate (or polling on a topic if started with -p) and checking for
+  data updates
+- The writer thread, writing data to the file
+
+In between there is a write buffer with configurable size. It should be large to avoid dropouts.
+
+### Examples
+Typical usage to start logging immediately:
+$ logger start -e -t
+
+Or if already running:
+$ logger on
+)DESCR_STR");
+
+	PRINT_MODULE_USAGE_NAME("logger", "system");
+	PRINT_MODULE_USAGE_COMMAND("start");
+	PRINT_MODULE_USAGE_PARAM_STRING('m', "all", "file|mavlink|all", "Backend mode", true);
+	PRINT_MODULE_USAGE_PARAM_FLAG('e', "Enable logging right after start until disarm (otherwise only when armed)", true);
+	PRINT_MODULE_USAGE_PARAM_FLAG('f', "Log until shutdown (implies -e)", true);
+	PRINT_MODULE_USAGE_PARAM_FLAG('t', "Use date/time for naming log directories and files", true);
+	PRINT_MODULE_USAGE_PARAM_INT('r', 280, 0, 8000, "Log rate in Hz, 0 means unlimited rate", true);
+	PRINT_MODULE_USAGE_PARAM_INT('b', 12, 4, 10000, "Log buffer size in KiB", true);
+	PRINT_MODULE_USAGE_PARAM_INT('q', 14, 1, 100, "uORB queue size for mavlink mode", true);
+	PRINT_MODULE_USAGE_PARAM_STRING('p', nullptr, "<topic_name>",
+					 "Poll on a topic instead of running with fixed rate (Log rate and topic intervals are ignored if this is set)", true);
+	PRINT_MODULE_USAGE_COMMAND_DESCR("on", "start logging now, override arming (logger must be running)");
+	PRINT_MODULE_USAGE_COMMAND_DESCR("off", "stop logging now, override arming (logger must be running)");
+	PRINT_MODULE_USAGE_DEFAULT_COMMANDS();
+
+	return 0;
 }
 
-int Logger::start(char *const *argv)
+int Logger::task_spawn(int argc, char *argv[])
 {
-	ASSERT(logger_task == -1);
+	_task_id = px4_task_spawn_cmd("logger",
+				      SCHED_DEFAULT,
+				      SCHED_PRIORITY_LOG_CAPTURE,
+				      3600,
+				      (px4_main_t)&run_trampoline,
+				      (char *const *)argv);
 
-	/* start the task */
-	logger_task = px4_task_spawn_cmd("logger",
-					 SCHED_DEFAULT,
-					 SCHED_PRIORITY_MAX - 5,
-					 3600,
-					 (px4_main_t)&Logger::run_trampoline,
-					 (char *const *)argv);
-
-	if (logger_task < 0) {
-		logger_task = -1;
-		PX4_WARN("task start failed");
+	if (_task_id < 0) {
+		_task_id = -1;
 		return -errno;
 	}
 
-	return OK;
+	return 0;
 }
 
-void Logger::status()
+int Logger::print_status()
 {
 	PX4_INFO("Running in mode: %s", configured_backend_mode());
 
+	bool is_logging = false;
 	if (_writer.is_started(LogWriter::BackendFile)) {
 		PX4_INFO("File Logging Running");
 		print_statistics();
+		is_logging = true;
 	}
 
 	if (_writer.is_started(LogWriter::BackendMavlink)) {
 		PX4_INFO("Mavlink Logging Running");
+		is_logging = true;
 	}
+
+	if (!is_logging) {
+		PX4_INFO("Not logging");
+	}
+
+	return 0;
 }
 
 void Logger::print_statistics()
@@ -254,7 +247,7 @@ void Logger::print_statistics()
 	_max_dropout_duration = 0.f;
 }
 
-void Logger::run_trampoline(int argc, char *argv[])
+Logger *Logger::instantiate(int argc, char *argv[])
 {
 	uint32_t log_interval = 3500;
 	int log_buffer_size = 12 * 1024;
@@ -265,12 +258,13 @@ void Logger::run_trampoline(int argc, char *argv[])
 	unsigned int queue_size = 14; //TODO: we might be able to reduce this if mavlink polled on the topic and/or
 	// topic sizes get reduced
 	LogWriter::Backend backend = LogWriter::BackendAll;
+	const char *poll_topic = nullptr;
 
 	int myoptind = 1;
 	int ch;
 	const char *myoptarg = nullptr;
 
-	while ((ch = px4_getopt(argc, argv, "r:b:etfm:q:", &myoptind, &myoptarg)) != EOF) {
+	while ((ch = px4_getopt(argc, argv, "r:b:etfm:q:p:", &myoptind, &myoptarg)) != EOF) {
 		switch (ch) {
 		case 'r': {
 				unsigned long r = strtoul(myoptarg, nullptr, 10);
@@ -324,6 +318,10 @@ void Logger::run_trampoline(int argc, char *argv[])
 
 			break;
 
+		case 'p':
+			poll_topic = myoptarg;
+			break;
+
 		case 'q':
 			queue_size = strtoul(myoptarg, nullptr, 10);
 
@@ -345,12 +343,11 @@ void Logger::run_trampoline(int argc, char *argv[])
 	}
 
 	if (error_flag) {
-		logger_task = -1;
-		return;
+		return nullptr;
 	}
 
-	logger_ptr = new Logger(backend, log_buffer_size, log_interval, log_on_start,
-				log_until_shutdown, log_name_timestamp, queue_size);
+	Logger *logger = new Logger(backend, log_buffer_size, log_interval, poll_topic, log_on_start,
+				    log_until_shutdown, log_name_timestamp, queue_size);
 
 #if defined(DBGPRINT) && defined(__PX4_NUTTX)
 	struct mallinfo alloc_info = mallinfo();
@@ -358,60 +355,57 @@ void Logger::run_trampoline(int argc, char *argv[])
 	PX4_INFO("remaining free heap: %d bytes", alloc_info.fordblks);
 #endif /* DBGPRINT */
 
-	if (logger_ptr == nullptr) {
+	if (logger == nullptr) {
 		PX4_ERR("alloc failed");
 
 	} else {
+#ifndef __PX4_NUTTX
 		//check for replay mode
 		const char *logfile = getenv(px4::replay::ENV_FILENAME);
 
 		if (logfile) {
-			logger_ptr->setReplayFile(logfile);
+			logger->setReplayFile(logfile);
 		}
 
-		logger_ptr->run();
+#endif /* __PX4_NUTTX */
+
 	}
 
-	logger_task = -1;
+	return logger;
 }
 
 
-Logger::Logger(LogWriter::Backend backend, size_t buffer_size, uint32_t log_interval, bool log_on_start,
-	       bool log_until_shutdown, bool log_name_timestamp, unsigned int queue_size) :
+Logger::Logger(LogWriter::Backend backend, size_t buffer_size, uint32_t log_interval, const char *poll_topic_name,
+	       bool log_on_start, bool log_until_shutdown, bool log_name_timestamp, unsigned int queue_size) :
 	_arm_override(false),
 	_log_on_start(log_on_start),
 	_log_until_shutdown(log_until_shutdown),
 	_log_name_timestamp(log_name_timestamp),
 	_writer(backend, buffer_size, queue_size),
-	_log_interval(log_interval),
-	_sdlog_mode(0)
+	_log_interval(log_interval)
 {
 	_log_utc_offset = param_find("SDLOG_UTC_OFFSET");
-	_sdlog_mode_handle = param_find("SDLOG_MODE");
+	_log_dirs_max = param_find("SDLOG_DIRS_MAX");
+	_sdlog_profile_handle = param_find("SDLOG_PROFILE");
+
+	if (poll_topic_name) {
+		const orb_metadata **topics = orb_get_topics();
+
+		for (size_t i = 0; i < orb_topics_count(); i++) {
+			if (strcmp(poll_topic_name, topics[i]->o_name) == 0) {
+				_polling_topic_meta = topics[i];
+				break;
+			}
+		}
+
+		if (!_polling_topic_meta) {
+			PX4_ERR("Failed to find topic %s", poll_topic_name);
+		}
+	}
 }
 
 Logger::~Logger()
 {
-	if (logger_task != -1) {
-		/* task wakes up every 100ms or so at the longest */
-		_task_should_exit = true;
-
-		/* wait for a second for the task to quit at our request */
-		unsigned int i = 0;
-
-		do {
-			/* wait 20ms */
-			usleep(20000);
-
-			/* if we have given up, kill it */
-			if (++i > 200) {
-				px4_task_delete(logger_task);
-				logger_task = -1;
-				break;
-			}
-		} while (logger_task != -1);
-	}
-
 	if (_replay_file_name) {
 		free(_replay_file_name);
 	}
@@ -421,52 +415,97 @@ Logger::~Logger()
 	}
 }
 
-int Logger::add_topic(const orb_metadata *topic)
+bool Logger::request_stop_static()
 {
-	int fd = -1;
+	if (is_running()) {
+		get_instance()->request_stop();
+		return false;
+	}
+
+	return true;
+}
+
+LoggerSubscription* Logger::add_topic(const orb_metadata *topic)
+{
+	LoggerSubscription *subscription = nullptr;
 	size_t fields_len = strlen(topic->o_fields) + strlen(topic->o_name) + 1; //1 for ':'
 
 	if (fields_len > sizeof(ulog_message_format_s::format)) {
 		PX4_WARN("skip topic %s, format string is too large: %zu (max is %zu)", topic->o_name, fields_len,
 			 sizeof(ulog_message_format_s::format));
 
-		return -1;
+		return nullptr;
 	}
 
-	fd = orb_subscribe(topic);
-
-	if (fd < 0) {
-		PX4_WARN("logger: orb_subscribe failed");
-		return -1;
-	}
-
-	if (!_subscriptions.push_back(LoggerSubscription(fd, topic))) {
-		PX4_WARN("logger: failed to add topic. Too many subscriptions");
-		orb_unsubscribe(fd);
-		fd = -1;
-	}
-
-	return fd;
-}
-
-int Logger::add_topic(const char *name, unsigned interval = 0)
-{
-	const orb_metadata **topics = orb_get_topics();
 	int fd = -1;
+	// Only subscribe to the topic now if it's published. If published later on, we'll dynamically
+	// add the subscription then
+	if (orb_exists(topic, 0) == 0) {
+		fd = orb_subscribe(topic);
 
-	for (size_t i = 0; i < orb_topics_count(); i++) {
-		if (strcmp(name, topics[i]->o_name) == 0) {
-			fd = add_topic(topics[i]);
-			PX4_DEBUG("logging topic: %s, interval: %i", topics[i]->o_name, interval);
-			break;
+		if (fd < 0) {
+			PX4_WARN("logger: %s subscribe failed (%i)", topic->o_name, errno);
+			return nullptr;
+		}
+	} else {
+		PX4_DEBUG("Topic %s does not exist. Not subscribing (yet)", topic->o_name);
+	}
+
+	if (_subscriptions.push_back(LoggerSubscription(fd, topic))) {
+		subscription = &_subscriptions[_subscriptions.size() - 1];
+	} else {
+		PX4_WARN("logger: failed to add topic. Too many subscriptions");
+		if (fd >= 0) {
+			orb_unsubscribe(fd);
 		}
 	}
 
-	if (fd >= 0 && interval != 0) {
-		orb_set_interval(fd, interval);
+	return subscription;
+}
+
+bool Logger::add_topic(const char *name, unsigned interval)
+{
+	const orb_metadata **topics = orb_get_topics();
+	LoggerSubscription *subscription = nullptr;
+
+	for (size_t i = 0; i < orb_topics_count(); i++) {
+		if (strcmp(name, topics[i]->o_name) == 0) {
+			bool already_added = false;
+
+			// check if already added: if so, only update the interval
+			for (size_t j = 0; j < _subscriptions.size(); ++j) {
+				if (_subscriptions[j].metadata == topics[i]) {
+					PX4_DEBUG("logging topic %s, interval: %i, already added, only setting interval",
+						  topics[i]->o_name, interval);
+					subscription = &_subscriptions[j];
+					already_added = true;
+					break;
+				}
+			}
+
+			if (!already_added) {
+				subscription = add_topic(topics[i]);
+				PX4_DEBUG("logging topic: %s, interval: %i", topics[i]->o_name, interval);
+				break;
+			}
+		}
 	}
 
-	return fd;
+	// if we poll on a topic, we don't use the interval and let the polled topic define the maximum interval
+	if (_polling_topic_meta) {
+		interval = 0;
+	}
+
+	if (subscription) {
+		if (subscription->fd[0] >= 0) {
+			orb_set_interval(subscription->fd[0], interval);
+		} else {
+			// store the interval: use a value < 0 to know it's not a valid fd
+			subscription->fd[0] = -interval - 1;
+		}
+	}
+
+	return subscription;
 }
 
 bool Logger::copy_if_updated_multi(LoggerSubscription &sub, int multi_instance, void *buffer, bool try_to_subscribe)
@@ -476,27 +515,13 @@ bool Logger::copy_if_updated_multi(LoggerSubscription &sub, int multi_instance, 
 
 	if (handle < 0 && try_to_subscribe) {
 
-		if (OK == orb_exists(sub.metadata, multi_instance)) {
-			handle = orb_subscribe_multi(sub.metadata, multi_instance);
+		if (try_to_subscribe_topic(sub, multi_instance)) {
 
-			//PX4_INFO("subscribed to instance %d of topic %s", multi_instance, sub.metadata->o_name);
+			write_add_logged_msg(sub, multi_instance);
 
 			/* copy first data */
-			if (handle >= 0) {
-				write_add_logged_msg(sub, multi_instance);
-
-				/* set to the same interval as the first instance */
-				unsigned int interval;
-
-				if (orb_get_interval(sub.fd[0], &interval) == 0 && interval > 0) {
-					orb_set_interval(handle, interval);
-				}
-
-				/* It can happen that orb_exists returns true, even if there is no publisher (but another subscriber).
-				 * We catch this here, because orb_copy will fail in this case. */
-				if (orb_copy(sub.metadata, handle, buffer) == PX4_OK) {
-					updated = true;
-				}
+			if (orb_copy(sub.metadata, handle, buffer) == PX4_OK) {
+				updated = true;
 			}
 		}
 
@@ -511,6 +536,39 @@ bool Logger::copy_if_updated_multi(LoggerSubscription &sub, int multi_instance, 
 	return updated;
 }
 
+bool Logger::try_to_subscribe_topic(LoggerSubscription &sub, int multi_instance)
+{
+	bool ret = false;
+	if (OK == orb_exists(sub.metadata, multi_instance)) {
+
+		unsigned int interval;
+
+		if (multi_instance == 0) {
+			// the first instance and no subscription yet: this means we stored the negative interval as fd
+			interval = (unsigned int) (-(sub.fd[0] + 1));
+		} else {
+			// set to the same interval as the first instance
+			if (orb_get_interval(sub.fd[0], &interval) != 0) {
+				interval = 0;
+			}
+		}
+
+		int &handle = sub.fd[multi_instance];
+		handle = orb_subscribe_multi(sub.metadata, multi_instance);
+
+		if (handle >= 0) {
+			PX4_DEBUG("subscribed to instance %d of topic %s", multi_instance, sub.metadata->o_name);
+			if (interval > 0) {
+				orb_set_interval(handle, interval);
+			}
+			ret = true;
+		} else {
+			PX4_ERR("orb_subscribe_multi %s failed (%i)", sub.metadata->o_name, errno);
+		}
+	}
+	return ret;
+}
+
 void Logger::add_default_topics()
 {
 #ifdef CONFIG_ARCH_BOARD_SITL
@@ -520,59 +578,106 @@ void Logger::add_default_topics()
 #endif
 
 	// Note: try to avoid setting the interval where possible, as it increases RAM usage
-
-	add_topic("vehicle_attitude", 10);
-	add_topic("actuator_outputs", 50);
-	add_topic("telemetry_status");
-	add_topic("vehicle_command");
-	add_topic("vehicle_status");
-	add_topic("vtol_vehicle_status", 100);
-	add_topic("commander_state", 100);
-	add_topic("satellite_info");
-	add_topic("vehicle_attitude_setpoint", 20);
-	add_topic("vehicle_rates_setpoint", 10);
-	add_topic("actuator_controls_0", 20);
-	add_topic("actuator_controls_1", 20);
-	add_topic("vehicle_local_position", 100);
-	add_topic("vehicle_local_position_setpoint", 50);
-	add_topic("vehicle_global_position", 100);
-	add_topic("vehicle_global_velocity_setpoint", 100);
-	add_topic("battery_status", 300);
-	add_topic("system_power", 300);
-	add_topic("position_setpoint_triplet", 10);
+	add_topic("actuator_controls_0", 100);
+	add_topic("actuator_controls_1", 100);
+	add_topic("actuator_outputs", 100);
+	add_topic("airspeed", 200);
 	add_topic("att_pos_mocap", 50);
-	add_topic("vision_position_estimate", 50);
-	add_topic("optical_flow", 50);
-	add_topic("rc_channels");
-	add_topic("input_rc");
-	add_topic("airspeed", 50);
-	add_topic("differential_pressure", 50);
-	add_topic("distance_sensor", 20);
-	add_topic("esc_status", 20);
-	add_topic("estimator_status", 50); //this one is large
-	add_topic("ekf2_innovations", 20);
-	add_topic("tecs_status", 20);
-	add_topic("wind_estimate", 100);
-	add_topic("control_state", 20);
+	add_topic("battery_status", 500);
+	add_topic("camera_capture");
 	add_topic("camera_trigger");
 	add_topic("cpuload");
-	add_topic("gps_dump"); //this will only be published if GPS_DUMP_COMM is set
-	add_topic("sensor_preflight");
-	add_topic("task_stack_info");
-
-	/* for estimator replay (need to be at full rate) */
-	add_topic("sensor_combined");
+	add_topic("distance_sensor", 100);
+	add_topic("ekf2_innovations", 200);
+	add_topic("esc_status", 250);
+	add_topic("estimator_status", 200);
+	add_topic("home_position");
+	add_topic("input_rc", 200);
+	add_topic("manual_control_setpoint", 200);
+	add_topic("mission_result");
+	add_topic("offboard_mission");
+	add_topic("optical_flow", 50);
+	add_topic("position_setpoint_triplet", 200);
+	add_topic("sensor_combined", 100);
+	add_topic("sensor_preflight", 200);
+	add_topic("system_power", 500);
+	add_topic("tecs_status", 200);
+	add_topic("telemetry_status");
+	add_topic("vehicle_attitude", 30);
+	add_topic("vehicle_attitude_setpoint", 100);
+	add_topic("vehicle_command");
+	add_topic("vehicle_global_position", 200);
 	add_topic("vehicle_gps_position");
 	add_topic("vehicle_land_detected");
+	add_topic("vehicle_local_position", 100);
+	add_topic("vehicle_local_position_setpoint", 100);
+	add_topic("vehicle_rates_setpoint", 30);
+	add_topic("vehicle_status", 200);
+	add_topic("vehicle_status_flags");
+	add_topic("vehicle_vision_attitude");
+	add_topic("vehicle_vision_position");
+	add_topic("vtol_vehicle_status", 200);
+	add_topic("wind_estimate", 200);
 }
 
-void Logger::add_calibration_topics()
+void Logger::add_high_rate_topics()
 {
-	// Note: try to avoid setting the interval where possible, as it increases RAM usage
+	// maximum rate to analyze fast maneuvers (e.g. for racing)
+	add_topic("actuator_controls_0");
+	add_topic("actuator_outputs");
+	add_topic("manual_control_setpoint");
+	add_topic("vehicle_attitude");
+	add_topic("vehicle_attitude_setpoint");
+	add_topic("vehicle_rates_setpoint");
+}
 
-	add_topic("sensor_gyro", 100);
+void Logger::add_debug_topics()
+{
+	add_topic("debug_key_value");
+	add_topic("debug_value");
+	add_topic("debug_vect");
+}
+
+void Logger::add_estimator_replay_topics()
+{
+	// for estimator replay (need to be at full rate)
+	add_topic("ekf2_timestamps");
+
+	// current EKF2 subscriptions
+	add_topic("airspeed");
+	add_topic("distance_sensor");
+	add_topic("optical_flow");
+	add_topic("sensor_baro");
+	add_topic("sensor_combined");
+	add_topic("sensor_selection");
+	add_topic("vehicle_gps_position");
+	add_topic("vehicle_land_detected");
+	add_topic("vehicle_status");
+	add_topic("vehicle_vision_attitude");
+	add_topic("vehicle_vision_position");
+}
+
+void Logger::add_thermal_calibration_topics()
+{
 	add_topic("sensor_accel", 100);
 	add_topic("sensor_baro", 100);
+	add_topic("sensor_gyro", 100);
+}
+
+void Logger::add_sensor_comparison_topics()
+{
+	add_topic("sensor_accel", 100);
+	add_topic("sensor_baro", 100);
+	add_topic("sensor_gyro", 100);
+	add_topic("sensor_mag", 100);
+}
+
+void Logger::add_system_identification_topics()
+{
+	// for system id need to log imu and controls at full rate
+	add_topic("actuator_controls_0");
+	add_topic("actuator_controls_1");
+	add_topic("sensor_combined");
 }
 
 int Logger::add_topics_from_file(const char *fname)
@@ -617,7 +722,7 @@ int Logger::add_topics_from_file(const char *fname)
 			}
 
 			/* add topic with specified interval */
-			if (add_topic(topic_name, interval) >= 0) {
+			if (add_topic(topic_name, interval)) {
 				ntopics++;
 
 			} else {
@@ -682,17 +787,47 @@ void Logger::run()
 
 	} else {
 
-		/* get the logging mode */
-		if (_sdlog_mode_handle != PARAM_INVALID) {
-			param_get(_sdlog_mode_handle, &_sdlog_mode);
+		// get the logging profile
+		SDLogProfileMask sdlog_profile = SDLogProfileMask::DEFAULT;
+
+		if (_sdlog_profile_handle != PARAM_INVALID) {
+			param_get(_sdlog_profile_handle, (int32_t*)&sdlog_profile);
+		}
+		if ((int32_t)sdlog_profile == 0) {
+			PX4_WARN("No logging profile selected. Using default set");
+			sdlog_profile = SDLogProfileMask::DEFAULT;
 		}
 
-		if (_sdlog_mode == 3) {
-			add_calibration_topics();
-
-		} else {
+		// load appropriate topics for profile
+		// the order matters: if several profiles add the same topic, the logging rate of the last one will be used
+		if (sdlog_profile & SDLogProfileMask::DEFAULT) {
 			add_default_topics();
 		}
+
+		if (sdlog_profile & SDLogProfileMask::ESTIMATOR_REPLAY) {
+			add_estimator_replay_topics();
+		}
+
+		if (sdlog_profile & SDLogProfileMask::THERMAL_CALIBRATION) {
+			add_thermal_calibration_topics();
+		}
+
+		if (sdlog_profile & SDLogProfileMask::SYSTEM_IDENTIFICATION) {
+			add_system_identification_topics();
+		}
+
+		if (sdlog_profile & SDLogProfileMask::HIGH_RATE) {
+			add_high_rate_topics();
+		}
+
+		if (sdlog_profile & SDLogProfileMask::DEBUG_TOPICS) {
+			add_debug_topics();
+		}
+
+		if (sdlog_profile & SDLogProfileMask::SENSOR_COMPARISON) {
+			add_sensor_comparison_topics();
+		}
+
 	}
 
 	int vehicle_command_sub = -1;
@@ -718,6 +853,10 @@ void Logger::run()
 		max_msg_size = sizeof(ulog_message_logging_s);
 	}
 
+	if (_polling_topic_meta && _polling_topic_meta->o_size > max_msg_size) {
+		max_msg_size = _polling_topic_meta->o_size;
+	}
+
 	if (max_msg_size > _msg_buffer_len) {
 		if (_msg_buffer) {
 			delete[](_msg_buffer);
@@ -738,12 +877,12 @@ void Logger::run()
 		return;
 	}
 
-	_task_should_exit = false;
-
 #ifdef DBGPRINT
 	hrt_abstime	timer_start = 0;
 	uint32_t	total_bytes = 0;
 #endif /* DBGPRINT */
+
+	px4_register_shutdown_hook(&Logger::request_stop_static);
 
 	// we start logging immediately
 	// the case where we wait with logging until vehicle is armed is handled below
@@ -756,19 +895,27 @@ void Logger::run()
 	memset(&timer_call, 0, sizeof(hrt_call));
 	px4_sem_t timer_semaphore;
 	px4_sem_init(&timer_semaphore, 0, 0);
-
 	/* timer_semaphore use case is a signal */
-
 	px4_sem_setprotocol(&timer_semaphore, SEM_PRIO_NONE);
 
+	int polling_topic_sub = -1;
 
-	hrt_call_every(&timer_call, _log_interval, _log_interval, timer_callback, &timer_semaphore);
+	if (_polling_topic_meta) {
+		polling_topic_sub = orb_subscribe(_polling_topic_meta);
+
+		if (polling_topic_sub < 0) {
+			PX4_ERR("Failed to subscribe (%i)", errno);
+		}
+
+	} else {
+		hrt_call_every(&timer_call, _log_interval, _log_interval, timer_callback, &timer_semaphore);
+	}
 
 	// check for new subscription data
 	hrt_abstime next_subscribe_check = 0;
 	int next_subscribe_topic_index = -1; // this is used to distribute the checks over time
 
-	while (!_task_should_exit) {
+	while (!should_exit()) {
 
 		// Start/stop logging when system arm/disarm
 		bool vehicle_status_updated;
@@ -785,6 +932,12 @@ void Logger::run()
 				_was_armed = armed;
 
 				if (armed) {
+
+					if (_should_stop_file_log) { // happens on quick arming after disarm
+						_should_stop_file_log = false;
+						stop_log_file();
+					}
+
 					start_log_file();
 
 #ifdef DBGPRINT
@@ -793,7 +946,9 @@ void Logger::run()
 #endif /* DBGPRINT */
 
 				} else {
-					stop_log_file();
+					// delayed stop: we measure the process loads and then stop
+					initialize_load_output();
+					_should_stop_file_log = true;
 				}
 			}
 		}
@@ -809,37 +964,55 @@ void Logger::run()
 
 				if (command.command == vehicle_command_s::VEHICLE_CMD_LOGGING_START) {
 					if ((int)(command.param1 + 0.5f) != 0) {
-						ack_vehicle_command(vehicle_command_ack_pub, command.command,
+						ack_vehicle_command(vehicle_command_ack_pub, &command,
 								    vehicle_command_s::VEHICLE_CMD_RESULT_UNSUPPORTED);
 
 					} else if (can_start_mavlink_log()) {
-						ack_vehicle_command(vehicle_command_ack_pub, command.command,
+						ack_vehicle_command(vehicle_command_ack_pub, &command,
 								    vehicle_command_s::VEHICLE_CMD_RESULT_ACCEPTED);
 						start_log_mavlink();
 
 					} else {
-						ack_vehicle_command(vehicle_command_ack_pub, command.command,
+						ack_vehicle_command(vehicle_command_ack_pub, &command,
 								    vehicle_command_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED);
 					}
 
 				} else if (command.command == vehicle_command_s::VEHICLE_CMD_LOGGING_STOP) {
 					stop_log_mavlink();
-					ack_vehicle_command(vehicle_command_ack_pub, command.command,
+					ack_vehicle_command(vehicle_command_ack_pub, &command,
 							    vehicle_command_s::VEHICLE_CMD_RESULT_ACCEPTED);
 				}
 			}
 		}
 
 
+
+		const hrt_abstime loop_time = hrt_absolute_time();
+
 		if (_writer.is_started()) {
+
+			/* check if we need to output the process load */
+			if (_next_load_print != 0 && loop_time >= _next_load_print) {
+				_next_load_print = 0;
+
+				if (_should_stop_file_log) {
+					_should_stop_file_log = false;
+					write_load_output(false);
+					stop_log_file();
+					continue; // skip to next loop iteration
+
+				} else {
+					write_load_output(true);
+				}
+			}
 
 			bool data_written = false;
 
 			/* Check if parameters have changed */
-			// this needs to change to a timestamped record to record a history of parameter changes
-			if (parameter_update_sub.check_updated()) {
-				parameter_update_sub.update();
-				write_changed_parameters();
+			if (!_should_stop_file_log) { // do not record param changes after disarming
+				if (parameter_update_sub.update()) {
+					write_changed_parameters();
+				}
 			}
 
 			/* wait for lock on log buffer */
@@ -855,7 +1028,7 @@ void Logger::run()
 				/* if this topic has been updated, copy the new data into the message buffer
 				 * and write a message to the log
 				 */
-				for (uint8_t instance = 0; instance < ORB_MULTI_MAX_INSTANCES; instance++) {
+				for (int instance = 0; instance < ORB_MULTI_MAX_INSTANCES; instance++) {
 					if (copy_if_updated_multi(sub, instance, _msg_buffer + sizeof(ulog_message_data_header_s),
 								  sub_idx == next_subscribe_topic_index)) {
 
@@ -927,10 +1100,10 @@ void Logger::run()
 			if (next_subscribe_topic_index != -1) {
 				if (++next_subscribe_topic_index >= _subscriptions.size()) {
 					next_subscribe_topic_index = -1;
-					next_subscribe_check = hrt_absolute_time() + TRY_SUBSCRIBE_INTERVAL;
+					next_subscribe_check = loop_time + TRY_SUBSCRIBE_INTERVAL;
 				}
 
-			} else if (hrt_absolute_time() > next_subscribe_check) {
+			} else if (loop_time > next_subscribe_check) {
 				next_subscribe_topic_index = 0;
 			}
 
@@ -952,17 +1125,57 @@ void Logger::run()
 
 #endif /* DBGPRINT */
 
+		} else { // not logging
+
+			// try to subscribe to new topics, even if we don't log, so that:
+			// - we avoid subscribing to many topics at once, when logging starts
+			// - we'll get the data immediately once we start logging (no need to wait for the next subscribe timeout)
+			if (next_subscribe_topic_index != -1) {
+				for (int instance = 0; instance < ORB_MULTI_MAX_INSTANCES; instance++) {
+					if (_subscriptions[next_subscribe_topic_index].fd[instance] < 0) {
+						try_to_subscribe_topic(_subscriptions[next_subscribe_topic_index], instance);
+					}
+				}
+				if (++next_subscribe_topic_index >= _subscriptions.size()) {
+					next_subscribe_topic_index = -1;
+					next_subscribe_check = loop_time + TRY_SUBSCRIBE_INTERVAL;
+				}
+
+			} else if (loop_time > next_subscribe_check) {
+				next_subscribe_topic_index = 0;
+			}
 		}
 
-		/*
-		 * We wait on the semaphore, which periodically gets updated by a high-resolution timer.
-		 * The simpler alternative would be:
-		 *   usleep(max(300, _log_interval - elapsed_time_since_loop_start));
-		 * And on linux this is quite accurate as well, but under NuttX it is not accurate,
-		 * because usleep() has only a granularity of CONFIG_MSEC_PER_TICK (=1ms).
-		 */
-		while (px4_sem_wait(&timer_semaphore) != 0);
+		// wait for next loop iteration...
+		if (polling_topic_sub >= 0) {
+			px4_pollfd_struct_t fds[1];
+			fds[0].fd = polling_topic_sub;
+			fds[0].events = POLLIN;
+			int pret = px4_poll(fds, 1, 1000);
+
+			if (pret < 0) {
+				PX4_ERR("poll failed (%i)", pret);
+
+			} else if (pret != 0) {
+				if (fds[0].revents & POLLIN) {
+					// need to to an orb_copy so that poll will not return immediately
+					orb_copy(_polling_topic_meta, polling_topic_sub, _msg_buffer);
+				}
+			}
+
+		} else {
+			/*
+			 * We wait on the semaphore, which periodically gets updated by a high-resolution timer.
+			 * The simpler alternative would be:
+			 *   usleep(max(300, _log_interval - elapsed_time_since_loop_start));
+			 * And on linux this is quite accurate as well, but under NuttX it is not accurate,
+			 * because usleep() has only a granularity of CONFIG_MSEC_PER_TICK (=1ms).
+			 */
+			while (px4_sem_wait(&timer_semaphore) != 0);
+		}
 	}
+
+	stop_log_file();
 
 	hrt_cancel(&timer_call);
 	px4_sem_destroy(&timer_semaphore);
@@ -972,12 +1185,16 @@ void Logger::run()
 
 	//unsubscribe
 	for (LoggerSubscription &sub : _subscriptions) {
-		for (uint8_t instance = 0; instance < ORB_MULTI_MAX_INSTANCES; instance++) {
-			if (sub.fd[instance] != -1) {
+		for (int instance = 0; instance < ORB_MULTI_MAX_INSTANCES; instance++) {
+			if (sub.fd[instance] >= 0) {
 				orb_unsubscribe(sub.fd[instance]);
 				sub.fd[instance] = -1;
 			}
 		}
+	}
+
+	if (polling_topic_sub >= 0) {
+		orb_unsubscribe(polling_topic_sub);
 	}
 
 	if (_mavlink_log_pub) {
@@ -992,6 +1209,8 @@ void Logger::run()
 	if (vehicle_command_sub != -1) {
 		orb_unsubscribe(vehicle_command_sub);
 	}
+
+	px4_unregister_shutdown_hook(&Logger::request_stop_static);
 }
 
 bool Logger::write_message(void *ptr, size_t size)
@@ -1042,15 +1261,15 @@ int Logger::create_log_dir(tm *tt)
 		}
 
 	} else {
-		uint16_t dir_number = 1; // start with dir sess001
+		uint16_t dir_number = _sess_dir_index;
 
 		/* look for the next dir that does not exist */
-		while (!_has_log_dir && dir_number <= MAX_NO_LOGFOLDER) {
+		while (!_has_log_dir) {
 			/* format log dir: e.g. /fs/microsd/sess001 */
 			int n = snprintf(_log_dir, sizeof(_log_dir), "%s/sess%03u", LOG_ROOT, dir_number);
 
 			if (n >= sizeof(_log_dir)) {
-				PX4_ERR("log path too long");
+				PX4_ERR("log path too long (%i)", n);
 				return -1;
 			}
 
@@ -1069,12 +1288,6 @@ int Logger::create_log_dir(tm *tt)
 			dir_number++;
 		}
 
-		if (dir_number >= MAX_NO_LOGFOLDER) {
-			/* we should not end up here, either we have more than MAX_NO_LOGFOLDER on the SD card, or another problem */
-			PX4_ERR("All %d possible dirs exist already", MAX_NO_LOGFOLDER);
-			return -1;
-		}
-
 		_has_log_dir = true;
 	}
 
@@ -1089,7 +1302,7 @@ bool Logger::file_exist(const char *filename)
 
 int Logger::get_log_file_name(char *file_name, size_t file_name_size)
 {
-	tm tt;
+	tm tt = {};
 	bool time_ok = false;
 
 	if (_log_name_timestamp) {
@@ -1178,7 +1391,7 @@ bool Logger::get_log_time(struct tm *tt, bool boot_time)
 
 	if (use_clock_time) {
 		/* take clock time if there's no fix (yet) */
-		struct timespec ts;
+		struct timespec ts = {};
 		px4_clock_gettime(CLOCK_REALTIME, &ts);
 		utc_time_sec = ts.tv_sec + (ts.tv_nsec / 1e9);
 
@@ -1229,16 +1442,29 @@ void Logger::start_log_file()
 	write_version();
 	write_formats();
 	write_parameters();
+	write_perf_data(true);
 	write_all_add_logged_msg();
 	_writer.set_need_reliable_transfer(false);
 	_writer.unselect_write_backend();
 	_writer.notify();
 
+	/* reset performance counters to get in-flight min and max values in post flight log */
+	perf_reset_all();
+
 	_start_time_file = hrt_absolute_time();
+
+	initialize_load_output();
 }
 
 void Logger::stop_log_file()
 {
+	if (!_writer.is_started(LogWriter::BackendFile)) {
+		return;
+	}
+
+	_writer.set_need_reliable_transfer(true);
+	write_perf_data(false);
+	_writer.set_need_reliable_transfer(false);
 	_writer.stop_log_file();
 }
 
@@ -1257,22 +1483,115 @@ void Logger::start_log_mavlink()
 	write_version();
 	write_formats();
 	write_parameters();
+	write_perf_data(true);
 	write_all_add_logged_msg();
 	_writer.set_need_reliable_transfer(false);
 	_writer.unselect_write_backend();
 	_writer.notify();
+
+	initialize_load_output();
 }
 
 void Logger::stop_log_mavlink()
 {
+	// don't write perf data since a client does not expect more data after a stop command
 	PX4_INFO("Stop mavlink log");
 	_writer.stop_log_mavlink();
+}
+
+struct perf_callback_data_t {
+	Logger *logger;
+	int counter;
+	bool preflight;
+	char *buffer;
+};
+
+void Logger::perf_iterate_callback(perf_counter_t handle, void *user)
+{
+	perf_callback_data_t *callback_data = (perf_callback_data_t *)user;
+	const int buffer_length = 256;
+	char buffer[buffer_length];
+	const char *perf_name;
+
+	perf_print_counter_buffer(buffer, buffer_length, handle);
+
+	if (callback_data->preflight) {
+		perf_name = "perf_counter_preflight";
+
+	} else {
+		perf_name = "perf_counter_postflight";
+	}
+
+	callback_data->logger->write_info_multiple(perf_name, buffer, callback_data->counter != 0);
+	++callback_data->counter;
+}
+
+void Logger::write_perf_data(bool preflight)
+{
+	perf_callback_data_t callback_data = {};
+	callback_data.logger = this;
+	callback_data.counter = 0;
+	callback_data.preflight = preflight;
+
+	// write the perf counters
+	perf_iterate_all(perf_iterate_callback, &callback_data);
+}
+
+
+void Logger::print_load_callback(void *user)
+{
+	perf_callback_data_t *callback_data = (perf_callback_data_t *)user;
+	const char *perf_name;
+
+	if (!callback_data->buffer) {
+		return;
+	}
+
+	if (callback_data->preflight) {
+		perf_name = "perf_top_preflight";
+
+	} else {
+		perf_name = "perf_top_postflight";
+	}
+
+	callback_data->logger->write_info_multiple(perf_name, callback_data->buffer, callback_data->counter != 0);
+	++callback_data->counter;
+}
+
+void Logger::initialize_load_output()
+{
+	perf_callback_data_t callback_data;
+	callback_data.logger = this;
+	callback_data.counter = 0;
+	callback_data.buffer = nullptr;
+	char buffer[140];
+	hrt_abstime curr_time = hrt_absolute_time();
+	init_print_load_s(curr_time, &_load);
+	// this will not yet print anything
+	print_load_buffer(curr_time, buffer, sizeof(buffer), print_load_callback, &callback_data, &_load);
+	_next_load_print = curr_time + 1000000;
+}
+
+void Logger::write_load_output(bool preflight)
+{
+	perf_callback_data_t callback_data = {};
+	char buffer[140];
+	callback_data.logger = this;
+	callback_data.counter = 0;
+	callback_data.buffer = buffer;
+	callback_data.preflight = preflight;
+	hrt_abstime curr_time = hrt_absolute_time();
+	_writer.set_need_reliable_transfer(true);
+	// TODO: maybe we should restrict the output to a selected backend (eg. when file logging is running
+	// and mavlink log is started, this will be added to the file as well)
+	print_load_buffer(curr_time, buffer, sizeof(buffer), print_load_callback, &callback_data, &_load);
+	_writer.set_need_reliable_transfer(false);
 }
 
 void Logger::write_formats()
 {
 	_writer.lock();
-	ulog_message_format_s msg;
+	ulog_message_format_s msg = {};
 	const orb_metadata **topics = orb_get_topics();
 
 	//write all known formats
@@ -1330,9 +1649,35 @@ void Logger::write_add_logged_msg(LoggerSubscription &subscription, int instance
 void Logger::write_info(const char *name, const char *value)
 {
 	_writer.lock();
-	ulog_message_info_header_s msg;
+	ulog_message_info_header_s msg = {};
 	uint8_t *buffer = reinterpret_cast<uint8_t *>(&msg);
 	msg.msg_type = static_cast<uint8_t>(ULogMessageType::INFO);
+
+	/* construct format key (type and name) */
+	size_t vlen = strlen(value);
+	msg.key_len = snprintf(msg.key, sizeof(msg.key), "char[%zu] %s", vlen, name);
+	size_t msg_size = sizeof(msg) - sizeof(msg.key) + msg.key_len;
+
+	/* copy string value directly to buffer */
+	if (vlen < (sizeof(msg) - msg_size)) {
+		memcpy(&buffer[msg_size], value, vlen);
+		msg_size += vlen;
+
+		msg.msg_size = msg_size - ULOG_MSG_HEADER_LEN;
+
+		write_message(buffer, msg_size);
+	}
+
+	_writer.unlock();
+}
+
+void Logger::write_info_multiple(const char *name, const char *value, bool is_continued)
+{
+	_writer.lock();
+	ulog_message_info_multiple_header_s msg;
+	uint8_t *buffer = reinterpret_cast<uint8_t *>(&msg);
+	msg.msg_type = static_cast<uint8_t>(ULogMessageType::INFO_MULTIPLE);
+	msg.is_continued = is_continued;
 
 	/* construct format key (type and name) */
 	size_t vlen = strlen(value);
@@ -1367,7 +1712,7 @@ template<typename T>
 void Logger::write_info_template(const char *name, T value, const char *type_str)
 {
 	_writer.lock();
-	ulog_message_info_header_s msg;
+	ulog_message_info_header_s msg = {};
 	uint8_t *buffer = reinterpret_cast<uint8_t *>(&msg);
 	msg.msg_type = static_cast<uint8_t>(ULogMessageType::INFO);
 
@@ -1388,7 +1733,7 @@ void Logger::write_info_template(const char *name, T value, const char *type_str
 
 void Logger::write_header()
 {
-	ulog_file_header_s header;
+	ulog_file_header_s header = {};
 	header.magic[0] = 'U';
 	header.magic[1] = 'L';
 	header.magic[2] = 'o';
@@ -1396,10 +1741,20 @@ void Logger::write_header()
 	header.magic[4] = 0x01;
 	header.magic[5] = 0x12;
 	header.magic[6] = 0x35;
-	header.magic[7] = 0x00; //file version 0
+	header.magic[7] = 0x01; //file version 1
 	header.timestamp = hrt_absolute_time();
 	_writer.lock();
 	write_message(&header, sizeof(header));
+
+	// write the Flags message: this MUST be written right after the ulog header
+	ulog_message_flag_bits_s flag_bits;
+
+	memset(&flag_bits, 0, sizeof(flag_bits));
+	flag_bits.msg_size = sizeof(flag_bits) - ULOG_MSG_HEADER_LEN;
+	flag_bits.msg_type = static_cast<uint8_t>(ULogMessageType::FLAG_BITS);
+
+	write_message(&flag_bits, sizeof(flag_bits));
+
 	_writer.unlock();
 }
 
@@ -1408,10 +1763,22 @@ void Logger::write_version()
 {
 	write_info("ver_sw", px4_firmware_version_string());
 	write_info("ver_sw_release", px4_firmware_version());
+	uint32_t vendor_version = px4_firmware_vendor_version();
+
+	if (vendor_version > 0) {
+		write_info("ver_vendor_sw_release", vendor_version);
+	}
+
 	write_info("ver_hw", px4_board_name());
 	write_info("sys_name", "PX4");
 	write_info("sys_os_name", px4_os_name());
 	const char *os_version = px4_os_version_string();
+
+	const char *git_branch = px4_firmware_git_branch();
+
+	if (git_branch && git_branch[0]) {
+		write_info("ver_sw_branch", git_branch);
+	}
 
 	if (os_version) {
 		write_info("sys_os_ver", os_version);
@@ -1430,11 +1797,12 @@ void Logger::write_version()
 		write_info("sys_mcu", mcu_ver);
 	}
 
+#ifndef BOARD_HAS_NO_UUID
 	/* write the UUID if enabled */
 	param_t write_uuid_param = param_find("SDLOG_UUID");
 
 	if (write_uuid_param != PARAM_INVALID) {
-		uint32_t write_uuid;
+		int32_t write_uuid;
 		param_get(write_uuid_param, &write_uuid);
 
 		if (write_uuid == 1) {
@@ -1443,6 +1811,7 @@ void Logger::write_version()
 			write_info("sys_uuid", uuid_string);
 		}
 	}
+#endif /* BOARD_HAS_NO_UUID */
 
 	int32_t utc_offset = 0;
 
@@ -1459,7 +1828,7 @@ void Logger::write_version()
 void Logger::write_parameters()
 {
 	_writer.lock();
-	ulog_message_parameter_header_s msg;
+	ulog_message_parameter_header_s msg = {};
 	uint8_t *buffer = reinterpret_cast<uint8_t *>(&msg);
 
 	msg.msg_type = static_cast<uint8_t>(ULogMessageType::PARAMETER);
@@ -1500,7 +1869,18 @@ void Logger::write_parameters()
 			size_t msg_size = sizeof(msg) - sizeof(msg.key) + msg.key_len;
 
 			/* copy parameter value directly to buffer */
-			param_get(param, &buffer[msg_size]);
+			switch (type) {
+			case PARAM_TYPE_INT32:
+				param_get(param, (int32_t*)&buffer[msg_size]);
+				break;
+
+			case PARAM_TYPE_FLOAT:
+				param_get(param, (float*)&buffer[msg_size]);
+				break;
+
+			default:
+				continue;
+			}
 			msg_size += value_size;
 
 			msg.msg_size = msg_size - ULOG_MSG_HEADER_LEN;
@@ -1516,7 +1896,7 @@ void Logger::write_parameters()
 void Logger::write_changed_parameters()
 {
 	_writer.lock();
-	ulog_message_parameter_header_s msg;
+	ulog_message_parameter_header_s msg = {};
 	uint8_t *buffer = reinterpret_cast<uint8_t *>(&msg);
 
 	msg.msg_type = static_cast<uint8_t>(ULogMessageType::PARAMETER);
@@ -1558,7 +1938,18 @@ void Logger::write_changed_parameters()
 			size_t msg_size = sizeof(msg) - sizeof(msg.key) + msg.key_len;
 
 			/* copy parameter value directly to buffer */
-			param_get(param, &buffer[msg_size]);
+			switch (type) {
+			case PARAM_TYPE_INT32:
+				param_get(param, (int32_t*)&buffer[msg_size]);
+				break;
+
+			case PARAM_TYPE_FLOAT:
+				param_get(param, (float*)&buffer[msg_size]);
+				break;
+
+			default:
+				continue;
+			}
 			msg_size += value_size;
 
 			/* msg_size is now 1 (msg_type) + 2 (msg_size) + 1 (key_len) + key_len + value_size */
@@ -1574,14 +1965,123 @@ void Logger::write_changed_parameters()
 
 int Logger::check_free_space()
 {
-	/* use statfs to determine the number of blocks left */
 	struct statfs statfs_buf;
 
-	if (statfs(LOG_ROOT, &statfs_buf) != 0) {
-		return PX4_ERROR;
+	int32_t max_log_dirs_to_keep = 0;
+
+	if (_log_dirs_max != PARAM_INVALID) {
+		param_get(_log_dirs_max, &max_log_dirs_to_keep);
 	}
 
-	/* use a threshold of 50 MiB */
+	if (max_log_dirs_to_keep == 0) {
+		max_log_dirs_to_keep = INT32_MAX;
+	}
+
+	/* remove old logs if the free space falls below a threshold */
+	do {
+		if (statfs(LOG_ROOT, &statfs_buf) != 0) {
+			return PX4_ERROR;
+		}
+
+		DIR *dp = opendir(LOG_ROOT);
+
+		if (dp == nullptr) {
+			break; // ignore if we cannot access the log directory
+		}
+
+		struct dirent *result = nullptr;
+
+		int num_sess = 0, num_dates = 0;
+
+		// There are 2 directory naming schemes: sess<i> or <year>-<month>-<day>.
+		// For both we find the oldest and then remove the one which has more directories.
+		int year_min = 10000, month_min = 99, day_min = 99, sess_idx_min = 99999999, sess_idx_max = 0;
+
+		while ((result = readdir(dp))) {
+			int year, month, day, sess_idx;
+
+			if (sscanf(result->d_name, "sess%d", &sess_idx) == 1) {
+				++num_sess;
+
+				if (sess_idx > sess_idx_max) {
+					sess_idx_max = sess_idx;
+				}
+
+				if (sess_idx < sess_idx_min) {
+					sess_idx_min = sess_idx;
+				}
+
+			} else if (sscanf(result->d_name, "%d-%d-%d", &year, &month, &day) == 3) {
+				++num_dates;
+
+				if (year < year_min) {
+					year_min = year;
+					month_min = month;
+					day_min = day;
+
+				} else if (year == year_min) {
+					if (month < month_min) {
+						month_min = month;
+						day_min = day;
+
+					} else if (month == month_min) {
+						if (day < day_min) {
+							day_min = day;
+						}
+					}
+				}
+			}
+		}
+
+		closedir(dp);
+
+		_sess_dir_index = sess_idx_max + 1;
+
+
+		uint64_t min_free_bytes = 300ULL * 1024ULL * 1024ULL;
+		uint64_t total_bytes = statfs_buf.f_blocks * statfs_buf.f_bsize / 10;
+
+		if (total_bytes / 10 < min_free_bytes) { // reduce the minimum if it's larger than 10% of the disk size
+			min_free_bytes = total_bytes / 10;
+		}
+
+		if (num_sess + num_dates <= max_log_dirs_to_keep &&
+		    statfs_buf.f_bavail >= (px4_statfs_buf_f_bavail_t)(min_free_bytes / statfs_buf.f_bsize)) {
+			break; // enough free space and limit not reached
+		}
+
+		if (num_sess == 0 && num_dates == 0) {
+			break; // nothing to delete
+		}
+
+		char directory_to_delete[LOG_DIR_LEN];
+		int n;
+
+		if (num_sess >= num_dates) {
+			n = snprintf(directory_to_delete, sizeof(directory_to_delete), "%s/sess%03u", LOG_ROOT, sess_idx_min);
+
+		} else {
+			n = snprintf(directory_to_delete, sizeof(directory_to_delete), "%s/%04u-%02u-%02u", LOG_ROOT, year_min, month_min,
+				     day_min);
+		}
+
+		if (n >= sizeof(directory_to_delete)) {
+			PX4_ERR("log path too long (%i)", n);
+			break;
+		}
+
+		PX4_WARN("removing log directory %s to get more space (left=%u MiB)", directory_to_delete,
+			 (unsigned int)(statfs_buf.f_bavail / 1024U * statfs_buf.f_bsize / 1024U));
+
+		if (remove_directory(directory_to_delete)) {
+			PX4_ERR("Failed to delete directory");
+			break;
+		}
+
+	} while (true);
+
+
+	/* use a threshold of 50 MiB: if below, do not start logging */
 	if (statfs_buf.f_bavail < (px4_statfs_buf_f_bavail_t)(50 * 1024 * 1024 / statfs_buf.f_bsize)) {
 		mavlink_log_critical(&_mavlink_log_pub,
 				     "[logger] Not logging; SD almost full: %u MiB",
@@ -1592,12 +2092,70 @@ int Logger::check_free_space()
 	return PX4_OK;
 }
 
-void Logger::ack_vehicle_command(orb_advert_t &vehicle_command_ack_pub, uint16_t command, uint32_t result)
+int Logger::remove_directory(const char *dir)
 {
-	vehicle_command_ack_s vehicle_command_ack;
-	vehicle_command_ack.timestamp = hrt_absolute_time();
-	vehicle_command_ack.command = command;
-	vehicle_command_ack.result = result;
+	DIR *d = opendir(dir);
+	size_t dir_len = strlen(dir);
+	struct dirent *p;
+	int ret = 0;
+
+	if (!d) {
+		return -1;
+	}
+
+	while (!ret && (p = readdir(d))) {
+		int ret2 = -1;
+		char *buf;
+		size_t len;
+
+		if (!strcmp(p->d_name, ".") || !strcmp(p->d_name, "..")) {
+			continue;
+		}
+
+		len = dir_len + strlen(p->d_name) + 2;
+		buf = new char[len];
+
+		if (buf) {
+			struct stat statbuf;
+
+			snprintf(buf, len, "%s/%s", dir, p->d_name);
+
+			if (!stat(buf, &statbuf)) {
+				if (S_ISDIR(statbuf.st_mode)) {
+					ret2 = remove_directory(buf);
+
+				} else {
+					ret2 = unlink(buf);
+				}
+			}
+
+			delete[] buf;
+		}
+
+		ret = ret2;
+	}
+
+	closedir(d);
+
+	if (!ret) {
+		ret = rmdir(dir);
+	}
+
+	return ret;
+}
+
+void Logger::ack_vehicle_command(orb_advert_t &vehicle_command_ack_pub, vehicle_command_s *cmd, uint32_t result)
+{
+	vehicle_command_ack_s vehicle_command_ack = {
+		.timestamp = hrt_absolute_time(),
+		.result_param2 = 0,
+		.command = cmd->command,
+		.result = (uint8_t)result,
+		.from_external = false,
+		.result_param1 = 0,
+		.target_system = cmd->source_system,
+		.target_component = cmd->source_component
+	};
 
 	if (vehicle_command_ack_pub == nullptr) {
 		vehicle_command_ack_pub = orb_advertise_queue(ORB_ID(vehicle_command_ack), &vehicle_command_ack,
@@ -1609,5 +2167,5 @@ void Logger::ack_vehicle_command(orb_advert_t &vehicle_command_ack_pub, uint16_t
 
 }
 
-}
-}
+} // namespace logger
+} // namespace px4

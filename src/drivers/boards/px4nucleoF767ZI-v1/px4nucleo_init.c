@@ -54,7 +54,7 @@
 #include <debug.h>
 #include <errno.h>
 
-#include <nuttx/arch.h>
+#include "platform/cxxinitialize.h"
 #include <nuttx/board.h>
 #include <nuttx/spi/spi.h>
 #include <nuttx/i2c/i2c_master.h>
@@ -70,7 +70,7 @@
 #include <arch/board/board.h>
 
 #include <drivers/drv_hrt.h>
-#include <drivers/drv_led.h>
+#include <drivers/drv_board_led.h>
 
 #include <systemlib/px4_macros.h>
 #include <systemlib/cpuload.h>
@@ -80,6 +80,7 @@
 #include <systemlib/hardfault_log.h>
 
 #include <systemlib/systemlib.h>
+#include <systemlib/param/param.h>
 
 #include "up_internal.h"
 /****************************************************************************
@@ -186,11 +187,6 @@ stm32_boardinitialize(void)
 	stm32_configgpio(GPIO_8266_RST);
 	stm32_configgpio(GPIO_BTN_SAFETY);
 
-#ifdef GPIO_RC_OUT
-	stm32_configgpio(GPIO_RC_OUT);      /* Serial RC output pin */
-	stm32_gpiowrite(GPIO_RC_OUT, 1);    /* set it high to pull RC input up */
-#endif
-
 	/* configure the GPIO pins to outputs and keep them low */
 	stm32_configgpio(GPIO_GPIO0_OUTPUT);
 	stm32_configgpio(GPIO_GPIO1_OUTPUT);
@@ -249,6 +245,8 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 	/* configure the high-resolution time/callout interface */
 	hrt_init();
+
+	param_init();
 
 	/* configure the DMA allocator */
 

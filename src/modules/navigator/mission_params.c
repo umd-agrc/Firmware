@@ -61,15 +61,16 @@ PARAM_DEFINE_FLOAT(MIS_TAKEOFF_ALT, 2.5f);
  * Minimum Loiter altitude
  *
  * This is the minimum altitude the system will always obey. The intent is to stay out of ground effect.
+ * set to -1, if there shouldn't be a minimum loiter altitude
  *
  * @unit m
- * @min 0
+ * @min -1
  * @max 80
  * @decimal 1
  * @increment 0.5
  * @group Mission
  */
-PARAM_DEFINE_FLOAT(MIS_LTRMIN_ALT, 1.2f);
+PARAM_DEFINE_FLOAT(MIS_LTRMIN_ALT, -1.0f);
 
 /**
  * Persistent onboard mission storage
@@ -87,16 +88,32 @@ PARAM_DEFINE_INT32(MIS_ONBOARD_EN, 1);
  *
  * Failsafe check to prevent running mission stored from previous flight at a new takeoff location.
  * Set a value of zero or less to disable. The mission will not be started if the current
- * waypoint is more distant than MIS_DIS_1WP from the current position.
+ * waypoint is more distant than MIS_DIS_1WP from the home position.
  *
  * @unit m
  * @min 0
- * @max 1000
+ * @max 10000
  * @decimal 1
- * @increment 0.5
+ * @increment 100
  * @group Mission
  */
 PARAM_DEFINE_FLOAT(MIS_DIST_1WP, 900);
+
+/**
+ * Maximal horizontal distance between waypoint
+ *
+ * Failsafe check to prevent running missions which are way too big.
+ * Set a value of zero or less to disable. The mission will not be started if any distance between
+ * two subsequent waypoints is greater than MIS_DIST_WPS.
+ *
+ * @unit m
+ * @min 0
+ * @max 10000
+ * @decimal 1
+ * @increment 100
+ * @group Mission
+ */
+PARAM_DEFINE_FLOAT(MIS_DIST_WPS, 900);
 
 /**
  * Altitude setpoint mode
@@ -124,6 +141,7 @@ PARAM_DEFINE_INT32(MIS_ALTMODE, 1);
  * @value 1 Heading towards waypoint
  * @value 2 Heading towards home
  * @value 3 Heading away from home
+ * @value 4 Heading towards ROI
  * @group Mission
  */
 PARAM_DEFINE_INT32(MIS_YAWMODE, 1);
@@ -132,7 +150,7 @@ PARAM_DEFINE_INT32(MIS_YAWMODE, 1);
  * Time in seconds we wait on reaching target heading at a waypoint if it is forced.
  *
  * If set > 0 it will ignore the target heading for normal waypoint acceptance. If the
- * waypoint forces the heading the timeout will matter. For example on VTOL forwards transiton.
+ * waypoint forces the heading the timeout will matter. For example on VTOL forwards transition.
  * Mainly useful for VTOLs that have less yaw authority and might not reach target
  * yaw in wind. Disabled by default.
  *
@@ -156,41 +174,3 @@ PARAM_DEFINE_FLOAT(MIS_YAW_TMT, -1.0f);
  * @group Mission
  */
 PARAM_DEFINE_FLOAT(MIS_YAW_ERR, 12.0f);
-
-/**
- * Weather-vane mode landings for missions
- *
- * @boolean
- * @group Mission
- */
-PARAM_DEFINE_INT32(VT_WV_LND_EN, 0);
-
-/**
- * Enable weather-vane mode takeoff for missions
- *
- * @boolean
- * @group Mission
- */
-PARAM_DEFINE_INT32(VT_WV_TKO_EN, 0);
-
-/**
- * Weather-vane mode for loiter
- *
- * @boolean
- * @group Mission
- */
-PARAM_DEFINE_INT32(VT_WV_LTR_EN, 0);
-
-/**
- * Cruise Airspeed
- *
- * The fixed wing controller tries to fly at this airspeed.
- *
- * @unit m/s
- * @min 0.0
- * @max 40
- * @decimal 1
- * @increment 0.5
- * @group FW TECS
- */
-PARAM_DEFINE_FLOAT(FW_AIRSPD_TRIM, 15.0f);

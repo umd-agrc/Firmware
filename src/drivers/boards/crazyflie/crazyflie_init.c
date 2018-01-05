@@ -54,7 +54,7 @@
 #include <debug.h>
 #include <errno.h>
 
-#include <nuttx/arch.h>
+#include "platform/cxxinitialize.h"
 #include <nuttx/board.h>
 #include <nuttx/analog/adc.h>
 
@@ -64,13 +64,14 @@
 #include <arch/board/board.h>
 
 #include <drivers/drv_hrt.h>
-#include <drivers/drv_led.h>
+#include <drivers/drv_board_led.h>
 
 #include <systemlib/px4_macros.h>
 #include <systemlib/cpuload.h>
 #include <systemlib/err.h>
 #include <systemlib/hardfault_log.h>
 #include <systemlib/systemlib.h>
+#include <systemlib/param/param.h>
 
 /****************************************************************************
  * Pre-Processor Definitions
@@ -145,8 +146,6 @@ stm32_boardinitialize(void)
 
 __EXPORT int board_app_initialize(uintptr_t arg)
 {
-	int result;
-
 #if defined(CONFIG_HAVE_CXX) && defined(CONFIG_HAVE_CXXINITIALIZE)
 
 	/* run C++ ctors before we go any further */
@@ -163,6 +162,8 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 	/* configure the high-resolution time/callout interface */
 	hrt_init();
+
+	param_init();
 
 	/* configure CPU load estimation */
 #ifdef CONFIG_SCHED_INSTRUMENTATION
@@ -325,15 +326,6 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	led_off(LED_BLUE);
 	led_off(LED_TX);
 	led_off(LED_RX);
-
-
-
-	result = board_i2c_initialize();
-
-	if (result != OK) {
-		led_on(LED_RED);
-		return -ENODEV;
-	}
 
 	return OK;
 }

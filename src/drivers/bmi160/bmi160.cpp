@@ -18,7 +18,7 @@ const uint8_t BMI160::_checked_registers[BMI160_NUM_CHECKED_REGISTERS] = {    BM
 									      BMIREG_NV_CONF
 									 };
 
-BMI160::BMI160(int bus, const char *path_accel, const char *path_gyro, spi_dev_e device, enum Rotation rotation) :
+BMI160::BMI160(int bus, const char *path_accel, const char *path_gyro, uint32_t device, enum Rotation rotation) :
 	SPI("BMI160", path_accel, bus, device, SPIDEV_MODE3, BMI160_BUS_SPEED),
 	_gyro(new BMI160_gyro(this, path_gyro)),
 	_whoami(0),
@@ -190,7 +190,7 @@ BMI160::init()
 
 	/* measurement will have generated a report, publish */
 	_accel_topic = orb_advertise_multi(ORB_ID(sensor_accel), &arp,
-					   &_accel_orb_class_instance, (is_external()) ? ORB_PRIO_MAX - 1 : ORB_PRIO_HIGH - 1);
+					   &_accel_orb_class_instance, (external()) ? ORB_PRIO_MAX - 1 : ORB_PRIO_HIGH - 1);
 
 	if (_accel_topic == nullptr) {
 		warnx("ADVERT FAIL");
@@ -202,7 +202,7 @@ BMI160::init()
 	_gyro_reports->get(&grp);
 
 	_gyro->_gyro_topic = orb_advertise_multi(ORB_ID(sensor_gyro), &grp,
-			     &_gyro->_gyro_orb_class_instance, (is_external()) ? ORB_PRIO_MAX - 1 : ORB_PRIO_HIGH - 1);
+			     &_gyro->_gyro_orb_class_instance, (external()) ? ORB_PRIO_MAX - 1 : ORB_PRIO_HIGH - 1);
 
 	if (_gyro->_gyro_topic == nullptr) {
 		warnx("ADVERT FAIL");
@@ -303,10 +303,6 @@ BMI160::accel_set_sample_rate(float frequency)
 	if (frequency <= 25 / 32) {
 		setbits |= BMI_ACCEL_RATE_25_32;
 		_accel_sample_rate = 25 / 32;
-
-	} else if (frequency <= 25 / 16) {
-		setbits |= BMI_ACCEL_RATE_25_16;
-		_accel_sample_rate = 25 / 16;
 
 	} else if (frequency <= 25 / 16) {
 		setbits |= BMI_ACCEL_RATE_25_16;
@@ -637,12 +633,10 @@ BMI160::ioctl(struct file *filp, int cmd, unsigned long arg)
 			case SENSOR_POLLRATE_DEFAULT:
 				if (BMI160_GYRO_DEFAULT_RATE > BMI160_ACCEL_DEFAULT_RATE) {
 					return ioctl(filp, SENSORIOCSPOLLRATE, BMI160_GYRO_DEFAULT_RATE);
-					warnx("GYROOOOOOOOO");
 
 				} else {
 					return ioctl(filp, SENSORIOCSPOLLRATE,
 						     BMI160_ACCEL_DEFAULT_RATE); //Polling at the highest frequency. We may get duplicate values on the sensors
-					warnx("ACCELLLLLLLLLLLL");
 				}
 
 			/* adjust to a legal polling interval in Hz */
@@ -720,24 +714,11 @@ BMI160::ioctl(struct file *filp, int cmd, unsigned long arg)
 			return OK;
 		}
 
-	case SENSORIOCGQUEUEDEPTH:
-		return _accel_reports->size();
-
 	case ACCELIOCGSAMPLERATE:
 		return _accel_sample_rate;
 
 	case ACCELIOCSSAMPLERATE:
 		return accel_set_sample_rate(arg);
-
-	case ACCELIOCGLOWPASS:
-		return _accel_filter_x.get_cutoff_freq();
-
-	case ACCELIOCSLOWPASS:
-		// set software filtering
-		_accel_filter_x.set_cutoff_frequency(1.0e6f / _call_interval, arg);
-		_accel_filter_y.set_cutoff_frequency(1.0e6f / _call_interval, arg);
-		_accel_filter_z.set_cutoff_frequency(1.0e6f / _call_interval, arg);
-		return OK;
 
 	case ACCELIOCSSCALE: {
 			/* copy scale, but only if off by a few percent */
@@ -766,20 +747,6 @@ BMI160::ioctl(struct file *filp, int cmd, unsigned long arg)
 
 	case ACCELIOCSELFTEST:
 		return accel_self_test();
-
-#ifdef ACCELIOCSHWLOWPASS
-
-	case ACCELIOCSHWLOWPASS:
-		_set_dlpf_filter(arg);
-		return OK;
-#endif
-
-#ifdef ACCELIOCGHWLOWPASS
-
-	case ACCELIOCGHWLOWPASS:
-		return _dlpf_freq;
-#endif
-
 
 	default:
 		/* give it to the superclass */
@@ -816,24 +783,11 @@ BMI160::gyro_ioctl(struct file *filp, int cmd, unsigned long arg)
 			return OK;
 		}
 
-	case SENSORIOCGQUEUEDEPTH:
-		return _gyro_reports->size();
-
 	case GYROIOCGSAMPLERATE:
 		return _gyro_sample_rate;
 
 	case GYROIOCSSAMPLERATE:
 		return gyro_set_sample_rate(arg);
-
-	case GYROIOCGLOWPASS:
-		return _gyro_filter_x.get_cutoff_freq();
-
-	case GYROIOCSLOWPASS:
-		// set software filtering
-		_gyro_filter_x.set_cutoff_frequency(1.0e6f / _call_interval, arg);
-		_gyro_filter_y.set_cutoff_frequency(1.0e6f / _call_interval, arg);
-		_gyro_filter_z.set_cutoff_frequency(1.0e6f / _call_interval, arg);
-		return OK;
 
 	case GYROIOCSSCALE:
 		/* copy scale in */
@@ -853,19 +807,6 @@ BMI160::gyro_ioctl(struct file *filp, int cmd, unsigned long arg)
 
 	case GYROIOCSELFTEST:
 		return gyro_self_test();
-
-#ifdef GYROIOCSHWLOWPASS
-
-	case GYROIOCSHWLOWPASS:
-		_set_dlpf_filter(arg);
-		return OK;
-#endif
-
-#ifdef GYROIOCGHWLOWPASS
-
-	case GYROIOCGHWLOWPASS:
-		return _dlpf_freq;
-#endif
 
 	default:
 		/* give it to the superclass */
@@ -1133,7 +1074,7 @@ BMI160::measure()
 
 	check_registers();
 
-	if ((!(status && (0x80)))  && (!(status && (0x04)))) {
+	if ((!(status & (0x80))) && (!(status & (0x04)))) {
 		perf_end(_sample_perf);
 		perf_count(_duplicates);
 		_got_duplicate = true;
@@ -1292,7 +1233,7 @@ BMI160::measure()
 	grb.temperature = _last_temperature;
 
 	/* return device ID */
-	grb.device_id = _gyro->_device_id.devid;;
+	grb.device_id = _gyro->_device_id.devid;
 
 	_accel_reports->force(&arb);
 	_gyro_reports->force(&grb);

@@ -69,7 +69,9 @@ Tiltrotor::Tiltrotor(VtolAttitudeControl *attc) :
 	_params_handles_tiltrotor.elevons_mc_lock = param_find("VT_ELEV_MC_LOCK");
 	_params_handles_tiltrotor.front_trans_dur_p2 = param_find("VT_TRANS_P2_DUR");
 	_params_handles_tiltrotor.fw_motors_off = param_find("VT_FW_MOT_OFFID");
-	_params_handles_tiltrotor.airspeed_mode = param_find("FW_ARSP_MODE");
+	_params_handles_tiltrotor.airspeed_disabled = param_find("FW_ARSP_MODE");
+	_params_handles_tiltrotor.diff_thrust = param_find("VT_FW_DIFTHR_EN");
+	_params_handles_tiltrotor.diff_thrust_scale = param_find("VT_FW_DIFTHR_SC");
 }
 
 Tiltrotor::~Tiltrotor()
@@ -86,7 +88,6 @@ Tiltrotor::parameters_update()
 	/* motors that must be turned off when in fixed wing mode */
 	param_get(_params_handles_tiltrotor.fw_motors_off, &l);
 	_params_tiltrotor.fw_motors_off = get_motor_off_channels(l);
-
 
 	/* vtol duration of a front transition */
 	param_get(_params_handles_tiltrotor.front_trans_dur, &v);
@@ -132,8 +133,13 @@ Tiltrotor::parameters_update()
 	}
 
 	/* airspeed mode */
-	param_get(_params_handles_tiltrotor.airspeed_mode, &l);
-	_params_tiltrotor.airspeed_mode = math::constrain(l, 0, 2);
+	param_get(_params_handles_tiltrotor.airspeed_disabled, &l);
+	_params_tiltrotor.airspeed_disabled = math::constrain(l, 0, 1);
+
+	param_get(_params_handles_tiltrotor.diff_thrust, &_params_tiltrotor.diff_thrust);
+
+	param_get(_params_handles_tiltrotor.diff_thrust_scale, &v);
+	_params_tiltrotor.diff_thrust_scale = math::constrain(v, -1.0f, 1.0f);
 }
 
 int Tiltrotor::get_motor_off_channels(int channels)
@@ -212,12 +218,12 @@ void Tiltrotor::update_vtol_state()
 				bool transition_to_p2 = can_transition_on_ground();
 
 				// check if we have reached airspeed to switch to fw mode
-				transition_to_p2 |= _params_tiltrotor.airspeed_mode != control_state_s::AIRSPD_MODE_DISABLED &&
+				transition_to_p2 |= !_params_tiltrotor.airspeed_disabled &&
 						    _airspeed->indicated_airspeed_m_s >= _params_tiltrotor.airspeed_trans &&
 						    (float)hrt_elapsed_time(&_vtol_schedule.transition_start) > (_params->front_trans_time_min * 1e6f);
 
 				// check if airspeed is invalid and transition by time
-				transition_to_p2 |= _params_tiltrotor.airspeed_mode == control_state_s::AIRSPD_MODE_DISABLED &&
+				transition_to_p2 |= _params_tiltrotor.airspeed_disabled &&
 						    _tilt_control > _params_tiltrotor.tilt_transition &&
 						    (float)hrt_elapsed_time(&_vtol_schedule.transition_start) > (_params->front_trans_time_openloop * 1e6f);
 
@@ -327,7 +333,7 @@ void Tiltrotor::update_transition_state()
 						&_vtol_schedule.transition_start) / (_params_tiltrotor.front_trans_dur * 1000000.0f);
 		}
 
-		bool use_airspeed = _params_tiltrotor.airspeed_mode != control_state_s::AIRSPD_MODE_DISABLED;
+		bool use_airspeed = !_params_tiltrotor.airspeed_disabled;
 
 		// at low speeds give full weight to MC
 		_mc_roll_weight = 1.0f;
@@ -425,9 +431,15 @@ void Tiltrotor::fill_actuator_outputs()
 		_actuators_out_0->control[actuator_controls_s::INDEX_THROTTLE] =
 			_actuators_fw_in->control[actuator_controls_s::INDEX_THROTTLE];
 
+		/* allow differential thrust if enabled */
+		if (_params_tiltrotor.diff_thrust == 1) {
+			_actuators_out_0->control[actuator_controls_s::INDEX_ROLL] =
+				_actuators_fw_in->control[actuator_controls_s::INDEX_YAW] * _params_tiltrotor.diff_thrust_scale;
+		}
+
 	} else {
 		_actuators_out_0->control[actuator_controls_s::INDEX_THROTTLE] =
-			_actuators_mc_in->control[actuator_controls_s::INDEX_THROTTLE];;
+			_actuators_mc_in->control[actuator_controls_s::INDEX_THROTTLE];
 	}
 
 	_actuators_out_1->timestamp = _actuators_fw_in->timestamp;

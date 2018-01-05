@@ -2,7 +2,6 @@
 #
 # @name Crazyflie 2.0
 #
-# @board px4fmu-v1 exclude
 # @board px4fmu-v2 exclude
 # @board px4fmu-v3 exclude
 # @board px4fmu-v4 exclude
@@ -11,6 +10,9 @@
 # @board aerofc-v1 exclude
 #
 # @type Quadrotor x
+# @class Copter
+#
+# @maintainer Dennis Shtatov <densht@gmail.com>
 #
 
 sh /etc/init.d/4001_quad_x

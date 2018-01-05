@@ -45,13 +45,16 @@ PX4_ARCHWARNINGS = -Wall \
                    -Wno-sign-compare \
                    -Wno-unused-parameter \
                    -Wno-nonnull-compare \
-                   -Wno-misleading-indentation
+                   -Wno-implicit-fallthrough
+                   #-Wno-misleading-indentation # re-enable GCC >= 6
 
-#   -Wcast-qual  - generates spurious noreturn attribute warnings, try again later
-#   -Wconversion - would be nice, but too many "risky-but-safe" conversions in the code
-#   -Wcast-align - would help catch bad casts in some cases, but generates too many false positives
+#   -Wimplicit-fallthrough - generates compilation errors with GCC >= 7
+#   -Wnonnull-compare      - generates compilation errors with GCC >= 7
+#   -Wcast-qual            - generates spurious noreturn attribute warnings, try again later
+#   -Wconversion           - would be nice, but too many "risky-but-safe" conversions in the code
+#   -Wcast-align           - would help catch bad casts in some cases, but generates too many false positives
 
-PX4_ARCHCWARNINGS = $(ARCHWARNINGS) \
+PX4_ARCHCWARNINGS = \
                    -Wbad-function-cast \
                    -Wmissing-parameter-type \
                    -Wnested-externs \
@@ -64,12 +67,8 @@ PX4_ARCHCWARNINGS = $(ARCHWARNINGS) \
                    -Wno-nested-externs \
                    -Wno-old-style-declaration \
                    -Wno-pointer-sign \
-                   -Wno-type-limits \
-                   -Wno-unused-but-set-variable \
-                   -Wno-unused-function \
-                   -Wno-unused-label \
-                   -Wno-unused-variable
+                   -Wno-type-limits
 
-PX4_ARCHWARNINGSXX = $(ARCHWARNINGS) \
+PX4_ARCHWARNINGSXX = \
                    -Wno-cpp \
                    -Wno-psabi

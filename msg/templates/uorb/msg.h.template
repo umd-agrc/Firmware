@@ -65,12 +65,6 @@ topic_name = spec.short_name
 @##############################
 @# Generic Includes
 @##############################
-#include <stdint.h>
-#ifdef __cplusplus
-#include <cstring>
-#else
-#include <string.h>
-#endif
 
 #include <uORB/uORB.h>
 
@@ -118,6 +112,7 @@ struct @(uorb_struct) {
 @# timestamp at the beginning of each topic is required for logger
 	uint64_t timestamp; // required for logger
 @print_parsed_fields()
+
 #ifdef __cplusplus
 @# Constants again c++-ified
 @{
@@ -129,7 +124,7 @@ for constant in spec.constants:
     else:
         raise Exception("Type {0} not supported, add to to template file!".format(type_name))
 
-    print('\tstatic const %s %s = %s;'%(type_px4, constant.name, int(constant.val)))
+    print('\tstatic constexpr %s %s = %s;'%(type_px4, constant.name, int(constant.val)))
 }
 #endif
 };

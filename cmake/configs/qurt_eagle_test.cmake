@@ -6,7 +6,7 @@ else()
 	set(HEXAGON_SDK_ROOT $ENV{HEXAGON_SDK_ROOT})
 endif()
 
-set(config_generate_parameters_scope ALL)
+set(DISABLE_PARAMS_MODULE_SCOPING TRUE)
 
 # Get $QC_SOC_TARGET from environment if existing.
 if (DEFINED ENV{QC_SOC_TARGET})
@@ -31,18 +31,18 @@ set(config_module_list
 	#
 	# Library modules
 	#
-	modules/param
+	modules/systemlib/param
 	modules/systemlib
-	modules/systemlib/mixer
 	modules/uORB
 
 	#
 	# Libraries
 	#
-	lib/mathlib
-	lib/mathlib/math/filter
 	lib/conversion
 	lib/DriverFramework/framework
+	lib/mathlib
+	lib/mathlib/math/filter
+	lib/mixer
 
 	#
 	# QuRT port

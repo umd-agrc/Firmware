@@ -157,7 +157,6 @@ private:
 
 	perf_counter_t		_sample_perf;
 	perf_counter_t		_comms_errors;
-	perf_counter_t		_buffer_overflows;
 	perf_counter_t		_range_errors;
 	perf_counter_t		_conf_errors;
 
@@ -167,7 +166,7 @@ private:
 
 	enum Rotation		_rotation;
 
-	struct mag_report	_last_report;           /**< used for info() */
+	struct mag_report	_last_report {};          /**< used for info() */
 
 	uint8_t			_range_bits;
 	uint8_t			_cntl_reg1;
@@ -337,13 +336,11 @@ LIS3MDL::LIS3MDL(device::Device *interface, const char *path, enum Rotation rota
 	_mag_topic(nullptr),
 	_sample_perf(perf_alloc(PC_ELAPSED, "lis3mdl_read")),
 	_comms_errors(perf_alloc(PC_COUNT, "lis3mdl_comms_errors")),
-	_buffer_overflows(perf_alloc(PC_COUNT, "lis3mdl_buffer_overflows")),
 	_range_errors(perf_alloc(PC_COUNT, "lis3mdl_range_errors")),
 	_conf_errors(perf_alloc(PC_COUNT, "lis3mdl_conf_errors")),
 	_sensor_ok(false),
 	_calibrated(false),
 	_rotation(rotation),
-	_last_report{0},
 	_range_bits(0),
 	_cntl_reg1(0),
 	_cntl_reg4(0),
@@ -394,7 +391,6 @@ LIS3MDL::~LIS3MDL()
 	// free perf counters
 	perf_free(_sample_perf);
 	perf_free(_comms_errors);
-	perf_free(_buffer_overflows);
 	perf_free(_range_errors);
 	perf_free(_conf_errors);
 }
@@ -714,9 +710,6 @@ LIS3MDL::ioctl(struct file *filp, int cmd, unsigned long arg)
 			return OK;
 		}
 
-	case SENSORIOCGQUEUEDEPTH:
-		return _reports->size();
-
 	case SENSORIOCRESET:
 		return reset();
 
@@ -733,11 +726,6 @@ LIS3MDL::ioctl(struct file *filp, int cmd, unsigned long arg)
 
 	case MAGIOCGRANGE:
 		return _range_ga;
-
-	case MAGIOCSLOWPASS:
-	case MAGIOCGLOWPASS:
-		/* not supported, no internal filtering */
-		return -EINVAL;
 
 	case MAGIOCSSCALE:
 		/* set new scale factors */
@@ -914,6 +902,9 @@ LIS3MDL::collect()
 	/* this should be fairly close to the end of the measurement, so the best approximation of the time */
 	new_report.timestamp = hrt_absolute_time();
 	new_report.error_count = perf_event_count(_comms_errors);
+	new_report.range_ga = _range_ga;
+	new_report.scaling = _range_scale;
+	new_report.device_id = _device_id.devid;
 
 	/*
 	 * @note  We could read the status register here, which could tell us that
@@ -940,6 +931,12 @@ LIS3MDL::collect()
 	/* get measurements from the device */
 	new_report.temperature = report.t;
 	new_report.temperature = 25 + (report.t / (16 * 8.0f));
+
+	// XXX revisit for SPI part, might require a bus type IOCTL
+
+	unsigned dummy;
+	sensor_is_onboard = !_interface->ioctl(MAGIOCGEXTERNAL, dummy);
+	new_report.is_external = !sensor_is_onboard;
 
 	/*
 	 * RAW outputs
@@ -986,9 +983,7 @@ LIS3MDL::collect()
 	_last_report = new_report;
 
 	/* post a report to the ring */
-	if (_reports->force(&new_report)) {
-		perf_count(_buffer_overflows);
-	}
+	_reports->force(&new_report);
 
 	/* notify anyone waiting for data */
 	poll_notify(POLLIN);
@@ -1228,12 +1223,7 @@ int LIS3MDL::check_calibration()
 	}
 
 	/* return 0 if calibrated, 1 else */
-	if (!_calibrated) {
-		return 0;
-
-	} else {
-		return 1;
-	}
+	return !_calibrated;
 }
 
 int LIS3MDL::set_excitement(unsigned enable)
@@ -1306,7 +1296,6 @@ LIS3MDL::print_info()
 {
 	perf_print_counter(_sample_perf);
 	perf_print_counter(_comms_errors);
-	perf_print_counter(_buffer_overflows);
 	printf("poll interval:  %u ticks\n", _measure_ticks);
 	printf("output  (%.2f %.2f %.2f)\n", (double)_last_report.x, (double)_last_report.y, (double)_last_report.z);
 	printf("offsets (%.2f %.2f %.2f)\n", (double)_scale.x_offset, (double)_scale.y_offset, (double)_scale.z_offset);

@@ -50,28 +50,28 @@
 #define BPM280_VALUE_ID		0x58	/* chip id */
 #define BPM280_VALUE_RESET	0xB6	/* reset */
 
-#define BPM280_STATUS_MEASURING	1<<3	/* if in process of measure */
-#define BPM280_STATUS_COPING	1<<0	/* if in process of data copy */
+#define BPM280_STATUS_MEASURING	(1<<3)	/* if in process of measure */
+#define BPM280_STATUS_COPING	(1<<0)	/* if in process of data copy */
 
-#define BPM280_CTRL_P0		0x0<<2		/* no p measure */
-#define BPM280_CTRL_P1		0x1<<2
-#define BPM280_CTRL_P2		0x2<<2
-#define BPM280_CTRL_P4		0x3<<2
-#define BPM280_CTRL_P8		0x4<<2
-#define BPM280_CTRL_P16		0x5<<2
+#define BPM280_CTRL_P0		(0x0<<2)		/* no p measure */
+#define BPM280_CTRL_P1		(0x1<<2)
+#define BPM280_CTRL_P2		(0x2<<2)
+#define BPM280_CTRL_P4		(0x3<<2)
+#define BPM280_CTRL_P8		(0x4<<2)
+#define BPM280_CTRL_P16		(0x5<<2)
 
-#define BPM280_CTRL_T0		0x0<<5		/* no t measure */
-#define BPM280_CTRL_T1		0x1<<5
-#define BPM280_CTRL_T2		0x2<<5
-#define BPM280_CTRL_T4		0x3<<5
-#define BPM280_CTRL_T8		0x4<<5
-#define BPM280_CTRL_T16		0x5<<5
+#define BPM280_CTRL_T0		(0x0<<5)		/* no t measure */
+#define BPM280_CTRL_T1		(0x1<<5)
+#define BPM280_CTRL_T2		(0x2<<5)
+#define BPM280_CTRL_T4		(0x3<<5)
+#define BPM280_CTRL_T8		(0x4<<5)
+#define BPM280_CTRL_T16		(0x5<<5)
 
-#define BPM280_CONFIG_F0		0x0<<2		/* no filter */
-#define BPM280_CONFIG_F2		0x1<<2
-#define BPM280_CONFIG_F4		0x2<<2
-#define BPM280_CONFIG_F8		0x3<<2
-#define BPM280_CONFIG_F16		0x4<<2
+#define BPM280_CONFIG_F0		(0x0<<2)		/* no filter */
+#define BPM280_CONFIG_F2		(0x1<<2)
+#define BPM280_CONFIG_F4		(0x2<<2)
+#define BPM280_CONFIG_F8		(0x3<<2)
+#define BPM280_CONFIG_F16		(0x4<<2)
 
 
 #define BPM280_CTRL_MODE_SLEEP	0x0
@@ -131,20 +131,27 @@ struct fcalibration_s {
 class IBMP280
 {
 public:
-	virtual ~IBMP280() = 0;
+	virtual ~IBMP280() = default;
 
 	virtual bool is_external() = 0;
 	virtual int init() = 0;
 
-	virtual uint8_t get_reg(uint8_t addr) = 0; //read reg value
-	virtual int set_reg(uint8_t value, uint8_t addr) = 0; //write reg value
-	virtual bmp280::data_s *get_data(uint8_t addr) = 0; //bulk read of data into buffer, return same pointer
-	virtual bmp280::calibration_s *get_calibration(uint8_t addr) =
-		0; //bulk read of calibration data into buffer, return same pointer
+	// read reg value
+	virtual uint8_t get_reg(uint8_t addr) = 0;
+
+	// write reg value
+	virtual int set_reg(uint8_t value, uint8_t addr) = 0;
+
+	// bulk read of data into buffer, return same pointer
+	virtual bmp280::data_s *get_data(uint8_t addr) = 0;
+
+	// bulk read of calibration data into buffer, return same pointer
+	virtual bmp280::calibration_s *get_calibration(uint8_t addr) = 0;
 
 };
 
 } /* namespace */
+
 
 /* interface factories */
 extern bmp280::IBMP280 *bmp280_spi_interface(uint8_t busnum, uint8_t device, bool external);

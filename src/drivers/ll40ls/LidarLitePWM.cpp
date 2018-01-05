@@ -49,8 +49,9 @@
 #include <drivers/drv_hrt.h>
 #include <drivers/drv_pwm_input.h>
 
-LidarLitePWM::LidarLitePWM(const char *path) :
+LidarLitePWM::LidarLitePWM(const char *path, uint8_t rotation) :
 	CDev("LidarLitePWM", path),
+	_rotation(rotation),
 	_work{},
 	_reports(nullptr),
 	_class_instance(-1),
@@ -61,7 +62,6 @@ LidarLitePWM::LidarLitePWM(const char *path) :
 	_range{},
 	_sample_perf(perf_alloc(PC_ELAPSED, "ll40ls_pwm_read")),
 	_read_errors(perf_alloc(PC_COUNT, "ll40ls_pwm_read_errors")),
-	_buffer_overflows(perf_alloc(PC_COUNT, "ll40ls_pwm_buffer_overflows")),
 	_sensor_zero_resets(perf_alloc(PC_COUNT, "ll40ls_pwm_zero_resets"))
 {
 }
@@ -81,7 +81,6 @@ LidarLitePWM::~LidarLitePWM()
 
 	/* free perf counters */
 	perf_free(_sample_perf);
-	perf_free(_buffer_overflows);
 	perf_free(_sensor_zero_resets);
 }
 
@@ -122,7 +121,6 @@ void LidarLitePWM::print_info()
 {
 	perf_print_counter(_sample_perf);
 	perf_print_counter(_read_errors);
-	perf_print_counter(_buffer_overflows);
 	perf_print_counter(_sensor_zero_resets);
 	warnx("poll interval:  %u ticks", getMeasureTicks());
 	warnx("distance: %.3fm", (double)_range.current_distance);
@@ -181,7 +179,7 @@ int LidarLitePWM::measure()
 	_range.min_distance = get_minimum_distance();
 	_range.current_distance = float(_pwm.pulse_width) * 1e-3f;   /* 10 usec = 1 cm distance for LIDAR-Lite */
 	_range.covariance = 0.0f;
-	_range.orientation = 8;
+	_range.orientation = _rotation;
 	/* TODO: set proper ID */
 	_range.id = 0;
 
@@ -196,9 +194,7 @@ int LidarLitePWM::measure()
 		orb_publish(ORB_ID(distance_sensor), _distance_sensor_topic, &_range);
 	}
 
-	if (_reports->force(&_range)) {
-		perf_count(_buffer_overflows);
-	}
+	_reports->force(&_range);
 
 	poll_notify(POLLIN);
 	perf_end(_sample_perf);
@@ -286,4 +282,9 @@ int LidarLitePWM::reset_sensor()
 	int ret = ::ioctl(fd, SENSORIOCRESET, 0);
 	::close(fd);
 	return ret;
+}
+
+const char *LidarLitePWM::get_dev_name()
+{
+	return get_devname();
 }

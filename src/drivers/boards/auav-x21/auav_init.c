@@ -54,7 +54,7 @@
 #include <debug.h>
 #include <errno.h>
 
-#include <nuttx/arch.h>
+#include "platform/cxxinitialize.h"
 #include <nuttx/board.h>
 #include <nuttx/spi/spi.h>
 #include <nuttx/i2c/i2c_master.h>
@@ -69,7 +69,7 @@
 #include <arch/board/board.h>
 
 #include <drivers/drv_hrt.h>
-#include <drivers/drv_led.h>
+#include <drivers/drv_board_led.h>
 
 #include <systemlib/px4_macros.h>
 #include <systemlib/cpuload.h>
@@ -79,6 +79,7 @@
 #include <systemlib/hardfault_log.h>
 
 #include <systemlib/systemlib.h>
+#include <systemlib/param/param.h>
 
 /****************************************************************************
  * Pre-Processor Definitions
@@ -241,6 +242,8 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 
 	/* configure the high-resolution time/callout interface */
 	hrt_init();
+
+	param_init();
 
 	/* configure the DMA allocator */
 
@@ -422,7 +425,7 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	SPI_SETFREQUENCY(spi1, 10000000);
 	SPI_SETBITS(spi1, 8);
 	SPI_SETMODE(spi1, SPIDEV_MODE3);
-	SPI_SELECT(spi1, PX4_SPIDEV_ICM, false);
+	SPI_SELECT(spi1, PX4_SPIDEV_ICM_20608, false);
 	SPI_SELECT(spi1, PX4_SPIDEV_BARO, false);
 	SPI_SELECT(spi1, PX4_SPIDEV_MPU, false);
 	up_udelay(20);
@@ -444,7 +447,7 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	SPI_SETFREQUENCY(spi2, 12 * 1000 * 1000);
 	SPI_SETBITS(spi2, 8);
 	SPI_SETMODE(spi2, SPIDEV_MODE3);
-	SPI_SELECT(spi2, SPIDEV_FLASH, false);
+	SPI_SELECT(spi2, SPIDEV_FLASH(0), false);
 
 
 #ifdef CONFIG_MMCSD

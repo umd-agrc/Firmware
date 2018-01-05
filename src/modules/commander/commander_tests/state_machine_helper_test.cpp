@@ -41,7 +41,7 @@
 #include "state_machine_helper_test.h"
 
 #include "../state_machine_helper.h"
-#include <unit_test/unit_test.h>
+#include <unit_test.h>
 
 class StateMachineHelperTest : public UnitTest
 {
@@ -297,9 +297,9 @@ bool StateMachineHelperTest::armingStateTransitionTest()
 				nullptr /* no mavlink_log_pub */,
 				&status_flags,
 				5.0f, /* avionics rail voltage */
-                check_gps,
-                2e6 /* 2 seconds after boot, everything should be checked */
-                );
+				(check_gps ? ARM_REQ_GPS_BIT : 0),
+				2e6 /* 2 seconds after boot, everything should be checked */
+				);
 
         // Validate result of transition
         ut_compare(test->assertMsg, test->expected_transition_result, result);
@@ -342,6 +342,10 @@ bool StateMachineHelperTest::mainStateTransitionTest()
 
 		{ "transition: MANUAL to ACRO - rotary",
 			MTT_ROTARY_WING,
+			commander_state_s::MAIN_STATE_MANUAL, commander_state_s::MAIN_STATE_ACRO, TRANSITION_CHANGED },
+
+		{ "transition: MANUAL to ACRO - not rotary",
+			MTT_ALL_NOT_VALID,
 			commander_state_s::MAIN_STATE_MANUAL, commander_state_s::MAIN_STATE_ACRO, TRANSITION_CHANGED },
 
 		{ "transition: ACRO to MANUAL",
@@ -402,10 +406,6 @@ bool StateMachineHelperTest::mainStateTransitionTest()
 
 		// TRANSITION_DENIED tests
 
-		{ "transition: MANUAL to ACRO - not rotary",
-			MTT_ALL_NOT_VALID,
-			commander_state_s::MAIN_STATE_MANUAL, commander_state_s::MAIN_STATE_ACRO, TRANSITION_DENIED },
-
 		{ "no transition: MANUAL to AUTO_MISSION - global position not valid",
 			MTT_ALL_NOT_VALID,
 			commander_state_s::MAIN_STATE_MANUAL, commander_state_s::MAIN_STATE_AUTO_MISSION, TRANSITION_DENIED },
@@ -456,6 +456,7 @@ bool StateMachineHelperTest::mainStateTransitionTest()
 		current_status_flags.condition_local_position_valid = test->condition_bits & MTT_LOC_POS_VALID;
 		current_status_flags.condition_home_position_valid = test->condition_bits & MTT_HOME_POS_VALID;
 		current_status_flags.condition_global_position_valid = test->condition_bits & MTT_GLOBAL_POS_VALID;
+		current_status_flags.condition_auto_mission_available = true;
 
 		// Attempt transition
 		transition_result_t result = main_state_transition(&current_vehicle_status, test->to_state, main_state_prev,

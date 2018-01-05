@@ -69,23 +69,55 @@ typedef enum param_type_e {
 	PARAM_TYPE_UNKNOWN = 0xffff
 } param_type_t;
 
+
+#ifdef __PX4_NUTTX // on NuttX use 16 bits to save RAM
 /**
  * Parameter handle.
  *
  * Parameters are represented by parameter handles, which can
- * be obtained by looking up (or creating?) parameters.
+ * be obtained by looking up parameters. They are an offset into a global
+ * constant parameter array.
  */
-typedef uintptr_t	param_t;
+typedef uint16_t	param_t;
 
 /**
  * Handle returned when a parameter cannot be found.
  */
-#define PARAM_INVALID	((uintptr_t)0xffffffff)
+#define PARAM_INVALID	((uint16_t)0xffff)
 
 /**
  * Magic handle for hash check param
  */
-#define PARAM_HASH      ((uintptr_t)INT32_MAX)
+#define PARAM_HASH      ((uint16_t)INT16_MAX)
+
+#else // on other platforms use 32 bits for better performance
+
+/**
+ * Parameter handle.
+ *
+ * Parameters are represented by parameter handles, which can
+ * be obtained by looking up parameters. They are an offset into a global
+ * constant parameter array.
+ */
+typedef uint32_t	param_t;
+
+/**
+ * Handle returned when a parameter cannot be found.
+ */
+#define PARAM_INVALID	((uint32_t)0xffffffff)
+
+/**
+ * Magic handle for hash check param
+ */
+#define PARAM_HASH      ((uint32_t)INT32_MAX)
+
+#endif /* __PX4_NUTTX */
+
+
+/**
+ * Initialize the param backend. Call this on startup before calling any other methods.
+ */
+__EXPORT void		param_init(void);
 
 /**
  * Look up a parameter by name.
@@ -137,7 +169,7 @@ __EXPORT param_t	param_for_index(unsigned index);
 /**
  * Look up an used parameter by index.
  *
- * @param param		The parameter to obtain the index for.
+ * @param index		The parameter to obtain the index for.
  * @return		The index of the parameter in use, or -1 if the parameter does not exist.
  */
 __EXPORT param_t	param_for_used_index(unsigned index);
@@ -215,16 +247,6 @@ __EXPORT int		param_get(param_t param, void *val);
  * @return		Zero if the parameter's value could be set from a scalar, nonzero otherwise.
  */
 __EXPORT int		param_set(param_t param, const void *val);
-
-/**
- * Set the value of a parameter, but do not trigger an auto-save
- *
- * @param param		A handle returned by param_find or passed by param_foreach.
- * @param val		The value to set; assumed to point to a variable of the parameter type.
- *			For structures, the pointer is assumed to point to a structure to be copied.
- * @return		Zero if the parameter's value could be set from a scalar, nonzero otherwise.
- */
-__EXPORT int		param_set_no_autosave(param_t param, const void *val);
 
 /**
  * Set the value of a parameter, but do not notify the system about the change.
@@ -361,6 +383,14 @@ __EXPORT int 		param_load_default(void);
  */
 __EXPORT uint32_t	param_hash_check(void);
 
+
+/**
+ * Enable/disable the param autosaving.
+ * Re-enabling with changed params will not cause an autosave.
+ * @param enable true: enable autosaving, false: disable autosaving
+ */
+__EXPORT void	param_control_autosave(bool enable);
+
 /*
  * Macros creating static parameter definitions.
  *
@@ -420,5 +450,38 @@ struct param_info_s {
 };
 
 __END_DECLS
+
+
+
+#ifdef	__cplusplus
+#if 0 // set to 1 to debug param type mismatches
+#include <cstdio>
+#define CHECK_PARAM_TYPE(param, type) \
+	if (param_type(param) != type) { \
+		/* use printf() to avoid having to use more includes */ \
+		printf("wrong type passed to param_get() for param %s\n", param_name(param)); \
+	}
+#else
+#define CHECK_PARAM_TYPE(param, type)
+#endif
+
+// param is a C-interface. This means there is no overloading, and thus no type-safety for param_get().
+// So for C++ code we redefine param_get() to inlined overloaded versions, which gives us type-safety
+// w/o having to use a different interface
+static inline int param_get_cplusplus(param_t param, float *val)
+{
+	CHECK_PARAM_TYPE(param, PARAM_TYPE_FLOAT);
+	return param_get(param, val);
+}
+static inline int param_get_cplusplus(param_t param, int32_t *val)
+{
+	CHECK_PARAM_TYPE(param, PARAM_TYPE_INT32);
+	return param_get(param, val);
+}
+#undef CHECK_PARAM_TYPE
+
+#define param_get(param, val) param_get_cplusplus(param, val)
+
+#endif /* __cplusplus */
 
 #endif

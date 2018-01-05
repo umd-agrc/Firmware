@@ -6,7 +6,7 @@ else()
 	set(HEXAGON_SDK_ROOT $ENV{HEXAGON_SDK_ROOT})
 endif()
 
-set(config_generate_parameters_scope ALL)
+set(DISABLE_PARAMS_MODULE_SCOPING TRUE)
 
 # Get $QC_SOC_TARGET from environment if existing.
 if (DEFINED ENV{QC_SOC_TARGET})
@@ -22,7 +22,7 @@ include_directories(${HEXAGON_SDK_INCLUDES})
 
 set(config_module_list
 	drivers/device
-	drivers/boards/sitl
+	drivers/boards
 	drivers/pwm_out_sim
 	drivers/led
 	drivers/rgbled
@@ -32,6 +32,7 @@ set(config_module_list
 	# System commands
 	#
 	systemcmds/param
+	systemcmds/led
 	systemcmds/mixer
 
 	#
@@ -51,26 +52,27 @@ set(config_module_list
 	#
 	# Library modules
 	#
-	modules/param
+	modules/systemlib/param
 	modules/systemlib
-	modules/systemlib/mixer
 	modules/uORB
 	modules/commander
 
 	#
 	# Libraries
 	#
-	lib/mathlib
-	lib/mathlib/math/filter
+	lib/controllib
+	lib/conversion
+	lib/DriverFramework/framework
 	lib/geo
 	lib/geo_lookup
-	lib/conversion
-	lib/terrain_estimation
+	lib/led
+	lib/mathlib
+	lib/mathlib/math/filter
+	lib/mixer
 	lib/runway_takeoff
 	lib/tailsitter_recovery
-	lib/controllib
+	lib/terrain_estimation
 	lib/version
-	lib/DriverFramework/framework
 
 	#
 	# QuRT port

@@ -60,8 +60,6 @@ RCLoss::RCLoss(Navigator *navigator, const char *name) :
 	_param_loitertime(this, "LT"),
 	_rcl_state(RCL_STATE_NONE)
 {
-	/* load initial params */
-	updateParams();
 	/* initial reset */
 	on_inactive();
 }
@@ -83,7 +81,6 @@ void
 RCLoss::on_activation()
 {
 	_rcl_state = RCL_STATE_NONE;
-	updateParams();
 	advance_rcl();
 	set_rcl_item();
 }
@@ -92,7 +89,6 @@ void
 RCLoss::on_active()
 {
 	if (is_mission_item_reached()) {
-		updateParams();
 		advance_rcl();
 		set_rcl_item();
 	}
@@ -142,7 +138,8 @@ RCLoss::set_rcl_item()
 	reset_mission_item_reached();
 
 	/* convert mission item to current position setpoint and make it valid */
-	mission_item_to_position_setpoint(&_mission_item, &pos_sp_triplet->current);
+	mission_apply_limitation(_mission_item);
+	mission_item_to_position_setpoint(_mission_item, &pos_sp_triplet->current);
 	pos_sp_triplet->next.valid = false;
 
 	_navigator->set_position_setpoint_triplet_updated();

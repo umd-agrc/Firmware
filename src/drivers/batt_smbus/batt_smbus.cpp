@@ -339,15 +339,15 @@ BATT_SMBUS::~BATT_SMBUS()
 	}
 
 	if (_manufacturer_name != nullptr) {
-		delete _manufacturer_name;
+		delete[] _manufacturer_name;
 	}
 
 	if (_device_name != nullptr) {
-		delete _device_name;
+		delete[] _device_name;
 	}
 
 	if (_device_chemistry != nullptr) {
-		delete _device_chemistry;
+		delete[] _device_chemistry;
 	}
 }
 
@@ -440,11 +440,11 @@ BATT_SMBUS::search()
 {
 	bool found_slave = false;
 	uint16_t tmp;
-	int16_t orig_addr = get_address();
+	int16_t orig_addr = get_device_address();
 
 	// search through all valid SMBus addresses
 	for (uint8_t i = BATT_SMBUS_ADDR_MIN; i <= BATT_SMBUS_ADDR_MAX; i++) {
-		set_address(i);
+		set_device_address(i);
 
 		if (read_reg(BATT_SMBUS_VOLTAGE, tmp) == OK) {
 			warnx("battery found at 0x%x", (int)i);
@@ -456,7 +456,7 @@ BATT_SMBUS::search()
 	}
 
 	// restore original i2c address
-	set_address(orig_addr);
+	set_device_address(orig_addr);
 
 	// display completion message
 	if (found_slave) {
@@ -603,7 +603,7 @@ BATT_SMBUS::cycle()
 		uint8_t len = manufacturer_name((uint8_t *)man_name, sizeof(man_name));
 
 		if (len > 0) {
-			_manufacturer_name = new char[len];
+			_manufacturer_name = new char[len + 1];
 			strcpy(_manufacturer_name, man_name);
 			perform_solo_battry_check = true;
 		}
@@ -614,7 +614,7 @@ BATT_SMBUS::cycle()
 		uint8_t len = device_name((uint8_t *)dev_name, sizeof(dev_name));
 
 		if (len > 0) {
-			_device_name = new char[len];
+			_device_name = new char[len + 1];
 			strcpy(_device_name, dev_name);
 			perform_solo_battry_check = true;
 		}
@@ -625,7 +625,7 @@ BATT_SMBUS::cycle()
 		uint8_t len = device_chemistry((uint8_t *)dev_chem, sizeof(dev_chem));
 
 		if (len > 0) {
-			_device_chemistry = new char[len];
+			_device_chemistry = new char[len + 1];
 			strcpy(_device_chemistry, dev_chem);
 			perform_solo_battry_check = true;
 		}
@@ -869,7 +869,7 @@ BATT_SMBUS::get_PEC(uint8_t cmd, bool reading, const uint8_t buff[], uint8_t len
 	}
 
 	uint8_t tmp_buff[tmp_buff_len];
-	tmp_buff[0] = (uint8_t)get_address() << 1;
+	tmp_buff[0] = (uint8_t)get_device_address() << 1;
 	tmp_buff[1] = cmd;
 
 	if (reading) {

@@ -159,7 +159,7 @@
 #define STM32_RCC_DCKCFGR2_CK48MSRC   RCC_DCKCFGR2_CK48MSEL_PLL
 #define STM32_RCC_DCKCFGR2_SDMMCSRC   RCC_DCKCFGR2_SDMMCSEL_48MHZ
 #define STM32_RCC_DCKCFGR2_SDMMC2SRC  RCC_DCKCFGR2_SDMMC2SEL_48MHZ
-#define STM32_RCC_DCKCFGR2_DSISRC     RCC_DCKCFGR2_DSISEL_48MHZ
+#define STM32_RCC_DCKCFGR2_DSISRC     RCC_DCKCFGR2_DSISEL_PHY
 
 
 /* Several prescalers allow the configuration of the two AHB buses, the
@@ -225,7 +225,7 @@
  * DMA OFF: SDMMCCLK=48MHz, SDMMC_CK=SDMMCCLK/(2+2)=12 MHz
  */
 
-#ifdef CONFIG_SDIO_DMA
+#ifdef CONFIG_STM32_SDIO_DMA
 #  define STM32_SDMMC_MMCXFR_CLKDIV     (1 << STM32_SDMMC_CLKCR_CLKDIV_SHIFT)
 #else
 #  define STM32_SDMMC_MMCXFR_CLKDIV     (2 << STM32_SDMMC_CLKCR_CLKDIV_SHIFT)
@@ -236,7 +236,7 @@
  */
 //TODO #warning "Check Freq for 24mHz"
 
-#ifdef CONFIG_SDIO_DMA
+#ifdef CONFIG_STM32_SDIO_DMA
 #  define STM32_SDMMC_SDXFR_CLKDIV      (1 << STM32_SDMMC_CLKCR_CLKDIV_SHIFT)
 #else
 #  define STM32_SDMMC_SDXFR_CLKDIV      (2 << STM32_SDMMC_CLKCR_CLKDIV_SHIFT)
@@ -341,15 +341,15 @@
 #define GPIO_USART6_RX   GPIO_USART6_RX_2   /* PG9  */
 #define GPIO_USART6_TX   GPIO_USART6_TX_2   /* PG14 */
 #define GPIO_USART6_RTS  GPIO_USART6_RTS_2  /* PG8  */
-#define GPIO_USART6_CTT  GPIO_USART6_CTS_2  /* PG15 */
+#define GPIO_USART6_CTS  GPIO_USART6_CTS_2  /* PG15 */
 
 #define GPIO_UART7_RX    GPIO_UART7_RX_2    /* PF6 */
 #define GPIO_UART7_TX    GPIO_UART7_TX_1    /* PE8 */
 
 /* USART8: has no remap
  *
- *      GPIO_UART7_RX                          PE0[CN12-64]
- *      GPIO_UART7_TX                          PE1[CN11-61]
+ *      GPIO_UART8_RX                          PE0[CN12-64]
+ *      GPIO_UART8_TX                          PE1[CN11-61]
  */
 
 /* UART RX DMA configurations */
@@ -511,6 +511,8 @@
 # define PROBE_4    (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_CLEAR|GPIO_PORTE|GPIO_PIN9)   /* PE9  */
 # define PROBE_5    (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_CLEAR|GPIO_PORTD|GPIO_PIN13)  /* PD13 */
 # define PROBE_6    (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_CLEAR|GPIO_PORTD|GPIO_PIN14)  /* PD14 */
+# define PROBE_7    (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_CLEAR|GPIO_PORTH|GPIO_PIN6)   /* PH6  */
+# define PROBE_8    (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_CLEAR|GPIO_PORTH|GPIO_PIN9)   /* PH9  */
 
 # define PROBE_INIT(mask) \
     do { \
@@ -520,6 +522,8 @@
         if ((mask)& PROBE_N(4)) { stm32_configgpio(PROBE_4); } \
         if ((mask)& PROBE_N(5)) { stm32_configgpio(PROBE_5); } \
         if ((mask)& PROBE_N(6)) { stm32_configgpio(PROBE_6); } \
+        if ((mask)& PROBE_N(7)) { stm32_configgpio(PROBE_7); } \
+        if ((mask)& PROBE_N(8)) { stm32_configgpio(PROBE_8); } \
     } while(0)
 
 # define PROBE(n,s)  do {stm32_gpiowrite(PROBE_##n,(s));}while(0)

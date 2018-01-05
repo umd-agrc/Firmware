@@ -31,6 +31,8 @@
  *
  ****************************************************************************/
 
+#pragma once
+
 #include <stdint.h>
 
 #include <systemlib/battery.h>
@@ -67,7 +69,7 @@ public:
 	int set_channel(uint8_t channel);
 	int set_address(uint64_t addr);
 
-	int is_good(int i) { return _params_ack != 0; }
+	int is_good(int i) { return _params_ack[i] != 0; }
 
 	int pktrate;
 	int nullrate;
@@ -125,7 +127,7 @@ private:
 	int _params_sub;
 
 	// Current parameter values
-	uint32_t _channel, _rate;
+	int32_t _channel, _rate;
 	uint64_t _addr;
 	hrt_abstime _params_update[3]; // Time at which the parameters were updated
 	hrt_abstime _params_ack[3]; // Time at which the parameters were acknowledged by the nrf module

@@ -116,14 +116,14 @@
 #define PX4_SPI_BUS_EXT		2
 #define PX4_SPI_BUS_BARO	PX4_SPI_BUS_SENSORS
 
-/* Use these in place of the spi_dev_e enumeration to select a specific SPI device on SPI4 */
-#define PX4_SPIDEV_GYRO		1
-#define PX4_SPIDEV_ACCEL_MAG	2
-#define PX4_SPIDEV_BARO		3
-#define PX4_SPIDEV_MPU		4
+/* Use these in place of the uint32_t enumeration to select a specific SPI device on SPI4 */
+#define PX4_SPIDEV_GYRO       PX4_MK_SPI_SEL(PX4_SPI_BUS_SENSORS, 1)
+#define PX4_SPIDEV_ACCEL_MAG  PX4_MK_SPI_SEL(PX4_SPI_BUS_SENSORS, 2)
+#define PX4_SPIDEV_BARO       PX4_MK_SPI_SEL(PX4_SPI_BUS_SENSORS, 3)
+#define PX4_SPIDEV_MPU        PX4_MK_SPI_SEL(PX4_SPI_BUS_SENSORS, 4)
 
 /* External bus */
-#define PX4_SPIDEV_EXT0		1
+#define PX4_SPIDEV_EXT0       PX4_MK_SPI_SEL(PX4_SPI_BUS_EXT, 1)
 
 
 /* I2C busses */
@@ -276,22 +276,29 @@
 
 #define RC_SERIAL_PORT		"/dev/ttyS0"
 
-// #define GPIO_RSSI_IN		(GPIO_INPUT|GPIO_PULLUP|GPIO_PORTC|GPIO_PIN1)
-#define GPIO_SBUS_INV		(GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_SET|GPIO_PORTA|GPIO_PIN10)
-#define INVERT_RC_INPUT(_s)	px4_arch_gpiowrite(GPIO_SBUS_INV, _s);
+// #define GPIO_RSSI_IN                (GPIO_INPUT|GPIO_PULLUP|GPIO_PORTC|GPIO_PIN1)
+#define GPIO_SBUS_INV                  (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_SET|GPIO_PORTA|GPIO_PIN10)
+#define INVERT_RC_INPUT(_invert_true)  px4_arch_gpiowrite(GPIO_SBUS_INV, _invert_true);
 
-#define GPIO_FRSKY_INV		(GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_SET|GPIO_PORTB|GPIO_PIN12)
-#define INVERT_FRSKY(_s)	px4_arch_gpiowrite(GPIO_FRSKY_INV, _s);
+#define GPIO_FRSKY_INV                (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_SET|GPIO_PORTB|GPIO_PIN12)
+#define INVERT_FRSKY(_invert_true)    px4_arch_gpiowrite(GPIO_FRSKY_INV, _invert_true);
 
 /* Power switch controls */
-#define GPIO_SPEKTRUM_PWR_EN
-#define POWER_SPEKTRUM(_s)		do { } while (0)
-#define SPEKTRUM_RX_AS_UART()	px4_arch_configgpio(GPIO_USART1_RX)
+#define SPEKTRUM_POWER(_on_true)      do { } while (0)
 
-/* MindPXv2 has a separate GPIO for serial RC output */
-#define GPIO_RC_OUT		(GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_SET|GPIO_PORTC|GPIO_PIN6)
-#define SPEKTRUM_RX_AS_GPIO()	px4_arch_configgpio(GPIO_RC_OUT)
-#define SPEKTRUM_RX_HIGH(_s)	px4_arch_gpiowrite(GPIO_RC_OUT, (_s))
+/*
+ * MindPXv2 has one RC_IN
+ *
+ * GPIO PPM_IN on PC6 T8CH1
+ * SPEKTRUM_RX (it's TX or RX in Bind) on PC6 UART1
+ * Inversion is possible via the 74LVC2G86 controlled by the FMU
+ * The FMU can drive GPIO PPM_IN as an output
+ */
+
+#define GPIO_PPM_IN_AS_OUT            (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_2MHz|GPIO_OUTPUT_SET|GPIO_PORTC|GPIO_PIN6)
+#define SPEKTRUM_RX_AS_GPIO_OUTPUT()  px4_arch_configgpio(GPIO_PPM_IN_AS_OUT)
+#define SPEKTRUM_RX_AS_UART()         px4_arch_configgpio(GPIO_USART1_RX)
+#define SPEKTRUM_OUT(_one_true)       px4_arch_gpiowrite(GPIO_PPM_IN_AS_OUT, (_one_true))
 
 #define BOARD_NAME "MINDPX_V2"
 

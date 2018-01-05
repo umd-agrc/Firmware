@@ -54,7 +54,7 @@
 #include <debug.h>
 #include <errno.h>
 
-#include <nuttx/arch.h>
+#include "platform/cxxinitialize.h"
 #include <nuttx/board.h>
 #include <nuttx/spi/spi.h>
 #include <nuttx/i2c/i2c_master.h>
@@ -70,7 +70,7 @@
 #include <arch/board/board.h>
 
 #include <drivers/drv_hrt.h>
-#include <drivers/drv_led.h>
+#include <drivers/drv_board_led.h>
 
 #include <systemlib/px4_macros.h>
 #include <systemlib/cpuload.h>
@@ -79,6 +79,7 @@
 #include <systemlib/hardfault_log.h>
 
 #include <systemlib/systemlib.h>
+#include <systemlib/param/param.h>
 
 /****************************************************************************
  * Pre-Processor Definitions
@@ -151,8 +152,6 @@ stm32_boardinitialize(void)
 	/* configure power supply control/sense pins */
 
 	px4_arch_configgpio(GPIO_SBUS_INV);
-	px4_arch_configgpio(GPIO_RC_OUT);	/* Serial RC output pin */
-	px4_arch_gpiowrite(GPIO_RC_OUT, 1);	/* set it high to pull RC input up */
 	px4_arch_configgpio(GPIO_FRSKY_INV);
 
 	/* configure the GPIO pins to outputs and keep them low */
@@ -227,6 +226,8 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	/* configure the high-resolution time/callout interface */
 
 	hrt_init();
+
+	param_init();
 
 	/* configure the DMA allocator */
 
@@ -429,7 +430,7 @@ __EXPORT int board_app_initialize(uintptr_t arg)
 	SPI_SETFREQUENCY(spi1, 24 * 1000 * 1000);
 	SPI_SETBITS(spi1, 8);
 	SPI_SETMODE(spi1, SPIDEV_MODE3);
-	SPI_SELECT(spi1, SPIDEV_FLASH, false);
+	SPI_SELECT(spi1, SPIDEV_FLASH(0), false);
 
 
 	spi2 = px4_spibus_initialize(2);
