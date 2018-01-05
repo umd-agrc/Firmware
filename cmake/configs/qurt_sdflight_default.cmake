@@ -70,8 +70,6 @@ set(config_module_list
 	modules/uORB
 	modules/commander
 	modules/land_detector
-  modules/elka/common
-  modules/elka/qurt # my snapdragon uart driver
   modules/spektrum_serial_test
 
 	#

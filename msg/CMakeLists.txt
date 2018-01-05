@@ -51,9 +51,6 @@ set(msg_files
 	differential_pressure.msg
 	distance_sensor.msg
 	ekf2_innovations.msg
-	ekf2_replay.msg
-	elka_msg.msg
-	elka_msg_ack.msg
 	ekf2_timestamps.msg
 	elka_msg.msg
 	elka_packet.msg

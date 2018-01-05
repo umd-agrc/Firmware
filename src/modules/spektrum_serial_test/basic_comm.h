@@ -26,6 +26,8 @@ namespace elka {
 class elka::BasicMessageMgr {
 private:
   BasicMessageMgr(){_cnt=0;};
+  BasicMessageMgr(BasicMessageMgr const &){};
+  //BasicMessageMgr &operator=(BasicMessageMgr const &){};
   static BasicMessageMgr *_inst;
 
   std::map<int,BasicMessenger*> _messengers;

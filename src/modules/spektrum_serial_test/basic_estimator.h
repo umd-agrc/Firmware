@@ -43,8 +43,6 @@ namespace elka {
 #define SECT_ANG 2
 #define SECT_ANG_RATE 3
 
-#define SEC_TO_MICROSEC 10e6
-
 #define FILT_NONE 0
 #define FILT_STATE 1
 #define FILT_DERIV 2
