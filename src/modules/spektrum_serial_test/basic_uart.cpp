@@ -20,19 +20,6 @@ const char *spektrum_serial_path[MAX_NUM_SERIAL_DEVS] = {
 int serial_fd = -1;
 struct termios spektrum_oldtio;
 
-void spektrum_port_read_callback(void *context, char *buffer, size_t num_bytes) {
-  int rx_dev_id = (int)context;
-  char rx_buffer[SERIAL_SIZE_OF_DATA_BUFFER];
-
-  if (num_bytes > 0) {
-    memcpy(rx_buffer, buffer, num_bytes);
-    rx_buffer[num_bytes] = 0;
-    PX4_INFO("/dev/tty-%d read callback received bytes [%d]: %s",
-      rx_dev_id, num_bytes, rx_buffer);
-  } else {
-    PX4_ERR("error: read callback with no data in the buffer");
-  }
-}
 
 int spektrum_set_interface_attribs(int fd, int baud, int parity) {
 	struct termios tty;
@@ -100,153 +87,147 @@ void spektrum_set_blocking(int fd, int should_block) {
 		PX4_ERR("error %d setting term attributes", errno);
 }
 
-void spektrum_print_array(const uint8_t *buf, uint8_t len) {
-  char to_print[7*MAX_SERIAL_MSG_LEN+1],
-       a_char[7]; // 3 chars max for a uint8 number and empty space
-  uint8_t i=0;
 
-  memset(to_print,0,7*MAX_SERIAL_MSG_LEN+1);
-
-  while (i++ < len) {
-    sprintf(a_char,"%d ",*buf++);
-    strcat(to_print, a_char);
-  }
-
-  PX4_INFO("array: %s",to_print);
-}
-
-void spektrum_print_char_array(const char *buf, uint8_t len) {
-  PX4_INFO("char array");
-  spektrum_print_array((const uint8_t *)buf,len);
-}
-
-int spektrum_serial_open() {
-	PX4_INFO("Opening serial port");
-  serial_fd = open(spektrum_serial_path[0], O_RDWR | O_NOCTTY);
-  if (serial_fd >= PX4_OK) {
-    PX4_INFO("Opened serial port number %d", serial_fd);
-
-    // Save current serial port settings
-    tcgetattr(serial_fd,&spektrum_oldtio);
-		// Set baud to 38400 bps, 8n1 (no parity)
-		spektrum_set_interface_attribs(serial_fd,B38400,0);
-		// Set no blocking
-		spektrum_set_blocking(serial_fd, 0);
-  } else {
-  //FIXME log error!
-	PX4_INFO("Error opening serial port");
-    serial_fd = PX4_ERROR;
-  }
-  return serial_fd;
-}
-
-int spektrum_serial_close(int fd) {
-	PX4_INFO("Closing serial port");
-  
-  // restore old port settings
-  tcsetattr(fd,TCSANOW,&spektrum_oldtio);
-
-  if (!close(fd)) {
-    PX4_INFO("Successfully closed serial port number %d", fd);
-  } else {
-    PX4_INFO("Error closing serial port");
-    fd = PX4_ERROR;
-  }
-
-  return fd;
-}
-
-int spektrum_serial_read_callback(int fd) {
-  int res;
-
+//TODO take des argument
+elka::SnapdragonSerialMessenger::SnapdragonSerialMessenger(char *des){
   PX4_INFO("Beginning serial read callback setup");
+  strcpy(_des,des);
+
+  if (open() == SERIAL_ERROR)
+    PX4_ERR("Unable to create serial messenger");
 
   struct dspal_serial_ioctl_receive_data_callback recv_cb;
-  recv_cb.rx_data_callback_func_ptr = spektrum_port_read_callback;
+  recv_cb.rx_data_callback_func_ptr =
+    elka::SnapdragonSerialMessenger::read_cb_helper;
 
-  recv_cb.context = (void *)(1);
+  recv_cb.context = (void *)(this);
 
-  res = ioctl(fd,
+  int res = ioctl(_fd,
       SERIAL_IOCTL_SET_RECEIVE_DATA_CALLBACK,
       (void *)&recv_cb);
 
   PX4_INFO("Set serial read callback on %s %s",
-    spektrum_serial_path[0], res < PX4_OK ? "failed" : "succeeded");
+    _des, res < 0 ? "failed" : "succeeded");
 
-  if (res < PX4_OK) {
-    //TODO associate with any file if necessary
+  if (res < ELKA_SUCCESS) {
     PX4_INFO("Closing file %s",
-      spektrum_serial_path[0]);
-    close(fd);
-    fd = PX4_ERROR;
+      _des);
+    close();
+    _fd = SERIAL_ERROR;
   }
-
-	return fd;
 }
 
-int spektrum_serial_read(int fd, char* rx_buffer) {
+void elka::SnapdragonSerialMessenger::read_cb_helper(
+    void *context, char *buffer, size_t num_bytes){
+  ((SnapdragonSerialMessenger *)context)->read_callback(
+    buffer,num_bytes);
+}
+
+void elka::SnapdragonSerialMessenger::read_callback(
+    char *buffer, size_t num_bytes) {
+  memcpy(_rx_buf,buffer,num_bytes);
+#if defined(ELKA_DEBUG) && defined(DEBUG_SERIAL_READ)
+  PX4_INFO("Callback reading incoming message:");
+  print_array(_rx_buf,num_bytes);
+#endif
+  _data_rdy=true;
+}
+
+int8_t elka::SnapdragonSerialMessenger::probe(void *available) {
+    return SERIAL_ERROR;
+}
+
+int8_t elka::SnapdragonSerialMessenger::open() {
+	PX4_INFO("Opening serial port");
+  _fd = ::open((char *)_des, O_RDWR | O_NOCTTY);
+  if (_fd > 0) {
+    PX4_INFO("Opened serial port number %d",_fd);
+
+    // Save current serial port settings
+    tcgetattr(_fd,&spektrum_oldtio);
+		// Set baud to 38400 bps, 8n1 (no parity)
+		spektrum_set_interface_attribs(_fd,B38400,0);
+		// Set no blocking
+		spektrum_set_blocking(_fd, 0);
+  } else {
+    //FIXME log error!
+    PX4_INFO("Error opening serial port");
+    _fd = SERIAL_ERROR;
+    return SERIAL_ERROR;
+  }
+	return ELKA_SUCCESS;
+}
+
+int8_t elka::SnapdragonSerialMessenger::close() {
+	PX4_INFO("Closing serial port");
+  
+  // restore old port settings
+  tcsetattr(_fd,TCSANOW,&spektrum_oldtio);
+
+  usleep(2000);
+  if (!::close(_fd)) {
+    PX4_INFO("Successfully closed serial port number %d", _fd);
+  } else {
+    PX4_INFO("Error closing serial port");
+    _fd = SERIAL_ERROR;
+    return SERIAL_ERROR;
+  }
+
+	return ELKA_SUCCESS;
+}
+
+int8_t elka::SnapdragonSerialMessenger::send(
+    elka_packet_s *pkt) {
+  int num_bytes_written = 0;
+
+  //Reset packet len byte
+  _tx_buf[ELKA_MSG_PACKET_LEN]=0;
+
+  memcpy(_tx_buf,pkt->data,pkt->len);
+
+  num_bytes_written = write(_fd,
+      (const char *)_tx_buf,
+      _tx_buf[ELKA_MSG_PACKET_LEN]+1);
+
+  if (num_bytes_written == _tx_buf[ELKA_MSG_PACKET_LEN]+1) {
+    //TODO associate with any file if necessary
+#if defined(ELKA_DEBUG) && defined(DEBUG_SERIAL_WRITE)
+    PX4_INFO("Wrote %d bytes to %s", num_bytes_written,_des);
+    print_array((const uint8_t *)_tx_buf,
+        _tx_buf[ELKA_MSG_PACKET_LEN]+1);
+#endif
+  } else {
+    PX4_ERR("failed to write to %s",_des);
+    PX4_INFO("Closing file %s",_des);
+    close();
+    return SERIAL_ERROR;
+  }
+
+	return ELKA_SUCCESS;
+}
+
+//TODO add to BasicMessageMgr _msgs queue
+int8_t elka::SnapdragonSerialMessenger::recv() {
   int num_bytes_read = 0;
 
   PX4_INFO("Beginning serial read");
   
-  num_bytes_read = read(fd, rx_buffer,
-      SERIAL_SIZE_OF_DATA_BUFFER);
-  PX4_INFO("%s read bytes [%d]:",
-      spektrum_serial_path[0], num_bytes_read);
+  num_bytes_read = read(_fd, _rx_buf,
+      MAX_ARR_LEN);
+
+  _data_rdy=true;
+
+  PX4_INFO("%s read %d bytes:",
+      _des, num_bytes_read);
   //spektrum_print_char_array(rx_buffer, num_bytes_read);
 
   if (num_bytes_read < 0) {
     //TODO associate with any file if necessary
     PX4_INFO("Closing file %s",
-      spektrum_serial_path[0]);
-    close(fd);
-    fd = ERROR;
+      _des);
+    close();
+    return SERIAL_ERROR;
   }
 
-	return fd;
+	return ELKA_SUCCESS;
 }
-
-//FIXME why must these be here and not in another header?
-//#define ELKA_DEBUG 1
-//#define DEBUG_SERIAL 1
-int spektrum_serial_write(int fd, const char* tx_buffer,
-    uint8_t tx_buf_len) {
-  int num_bytes_written = 0;
-
-  num_bytes_written = write(fd,
-      (const char *)tx_buffer,
-      tx_buf_len);
-
-  if (num_bytes_written == tx_buf_len) {
-    //TODO associate with any file if necessary
-#if defined(ELKA_DEBUG) && defined(DEBUG_SERIAL_WRITE)
-    spektrum_print_array((const uint8_t *)tx_buffer, tx_buf_len);
-    PX4_INFO("Beginning serial write");
-    PX4_INFO("Wrote %d bytes to %s", num_bytes_written,
-        spektrum_serial_path[0]);
-#endif
-  } else {
-    //TODO associate with any file if necessary
-    PX4_ERR("failed to write to %s", spektrum_serial_path[0]);
-    PX4_INFO("Closing file %s", spektrum_serial_path[0]);
-    close(fd);
-    fd = PX4_ERROR;
-  }
-
-	return fd;
-}
-
-int spektrum_serial_read_write(int fd, char* rx_buffer,
-    const char* tx_buffer, uint8_t tx_buf_len){
-  int res = fd;
-  if (spektrum_serial_write(fd, tx_buffer, tx_buf_len) == fd) {
-		usleep(SERIAL_SIZE_OF_DATA_BUFFER*100);
-		if (spektrum_serial_read(fd, rx_buffer) != fd) {
-    res = PX4_ERROR;
-		} 
-	} else {
-		res = PX4_ERROR;
-	}
-  return res;
-}
-

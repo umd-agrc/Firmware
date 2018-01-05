@@ -9,6 +9,7 @@
 #include <lib/mathlib/math/Vector.hpp>
 #include <lib/mathlib/math/Quaternion.hpp>
 #include <lib/mathlib/math/Matrix.hpp>
+#include <uORB/topics/sensor_combined.h>
 
 #include "serial_defines.h"
 
@@ -52,6 +53,7 @@ namespace elka {
 
 #define BAD_NUM(x) (isnan(abs(x)) || isinf(abs(x)))
 
+
 struct sensor_stamped_s {
   uint8_t type;
   hrt_abstime ts; // timestamp
@@ -63,10 +65,9 @@ struct sensor_stamped_s {
   math::Vector<3> offset_t;
   math::Matrix<3,3> offset_r;
 
-  sensor_stamped_s() {
-  }
+  sensor_stamped_s() {}
 
-  sensor_stamped_s(hrt_abstime t, float[3] d,
+  sensor_stamped_s(hrt_abstime t, float d[3],
                    math::Vector<3> trans,
                    math::Matrix<3,3> rot,
                    uint8_t sens_type) {
@@ -80,7 +81,7 @@ struct sensor_stamped_s {
     convert_frame();
   }
 
-  void set_type(uint8_t sens_type); {
+  void set_type(uint8_t sens_type) {
     type=sens_type;
   }
 
@@ -100,7 +101,7 @@ struct sensor_stamped_s {
 
   }
 
-  void set_data(hrt_abstime t,float[3] s) {
+  void set_data(hrt_abstime t,float s[3]) {
     ts=t;
     update_bias();
     dat(0) = s[0];
@@ -125,13 +126,13 @@ struct sensor_stamped_s {
   const math::Vector<3> *get_bias() {
     return &bias;
   }
-}
+};
 
 struct pose_stamped_s {
   hrt_abstime t[STATE_LEN];
   math::Vector<STATE_LEN>pose;
   math::Quaternion q;
-  math::Vector<3> eul;
+  math::Vector<3> eul,body_pos,body_vel;
   math::Matrix<3,3> rot;
   math::Vector<3> offset_t;
   math::Matrix<3,3> offset_r;
@@ -177,11 +178,8 @@ struct pose_stamped_s {
       pose(n)=f;
     }
   }
-  float norm(bool planar_pos) {
-    if (planar_pos)
-      return sqrtf(pose(1)*pose(1)+pose(2)*pose(2));
-    else
-    return pose.length();
+  float pos_norm() {
+    return sqrtf(pose(1)*pose(1)+pose(2)*pose(2)+pose(3)*pose(3));
   }
   // Transform a vector by a rotation and a translation
   static math::Vector<3>transform(
@@ -202,15 +200,24 @@ struct pose_stamped_s {
     pose(2)=tmp(2);
   }
   void update_rot() {
+    // Update rotation with current direction quaternion
     q(0)=pose(6);
     q(1)=pose(7);
     q(2)=pose(8);
     q(3)=pose(9);
     eul=q.to_euler();
-    //TODO Update to 3-axis rot eventually
-    //rot.from_euler(eul(0),eul(1),eul(2));
     rot.from_euler(eul(0),eul(1),eul(2));
     rot=rot.inversed();
+
+    // Update body position & velocity
+    body_pos(0)=pose(0);
+    body_pos(1)=pose(1);
+    body_pos(2)=pose(2);
+    body_pos=rot*body_vel;
+    body_vel(3)=pose(3);
+    body_vel(4)=pose(4);
+    body_vel(5)=pose(5);
+    body_vel=rot*body_vel;
   }
   math::Matrix<3,3>get_rot(){
     update_rot();
@@ -221,36 +228,44 @@ struct pose_stamped_s {
     return eul;
   }
   // For now just do yaw correction
-  math::Vector<3>get_body(uint8_t sect) {
+  math::Vector<3>get_body_pose(uint8_t sect) {
     update_rot();
-    math::Vector<3> s;
-
     // Collect correct section, then perform
     // offset transformation if necessary.
     // For now, only perform offset rotation,
     // bc get_body() only being used with error state vector
     if (sect==SECT_POS) {
-      s(0)=pose(0);
-      s(1)=pose(1);
-      s(2)=pose(2);
-      //FIXME is this rotation correct?
-      s=rot*s;
+      return body_pos;
     } else if (sect==SECT_VEL) {
-      s(0)=pose(3);
-      s(1)=pose(4);
-      s(2)=pose(5);
-      //FIXME is this rotation correct?
-      s=rot*s;
+      return body_vel;
     } else if (sect==SECT_ANG) {
-      s(0)=eul(0);
-      s(1)=eul(1);
-      s(2)=eul(2);
+      return eul;
     } else if (sect==SECT_ANG_RATE) {
+      math::Vector<3> s;
       s(0)=pose(10);
       s(1)=pose(11);
       s(2)=pose(12);
+      return s;
+    } else {
+      return math::Vector<3>();
     }
+  }
 
+  math::Vector<12>get_body_pose() {
+    static math::Vector<12> s;
+    update_rot();
+    s(0)=body_pos(0);
+    s(1)=body_pos(1);
+    s(2)=body_pos(2);
+    s(3)=body_vel(0);
+    s(4)=body_vel(1);
+    s(5)=body_vel(2);
+    s(6)=eul(0);
+    s(7)=eul(1);
+    s(8)=eul(2);
+    s(9)=pose(10);
+    s(10)=pose(11);
+    s(11)=pose(12);
     return s;
   }
 };

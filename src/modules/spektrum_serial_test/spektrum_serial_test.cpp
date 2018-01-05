@@ -12,14 +12,9 @@
 #include <uORB/uORB.h>
 #include <uORB/topics/input_rc.h>
 
-#include "basic_navigator.h"
-#include "basic_uart.h"
 #include "spektrum_serial_test.h"
 
 extern "C" { __EXPORT int spektrum_serial_test_main(int argc, char *argv[]); }
-
-typedef struct gains gains_s;
-//static void set_gains();
 
 static int daemon_task;
 static volatile bool thread_should_exit;
@@ -29,7 +24,6 @@ hrt_abstime _prev_spektrum_update, _old_msg_duration;
 struct hrt_call	_serial_state_call;
 static int _serial_state_call_interval;
 gains_s _gains[3];
-bool _new_setpoint;
 
 void usage() {
   PX4_WARN("usage: spektrum_serial_test <start | stop | status>");
@@ -52,9 +46,9 @@ int spektrum_serial_test_main(int argc, char *argv[]) {
         thread_name,
         SCHED_DEFAULT,
         SCHED_PRIORITY_DEFAULT,
-        1000,
+        800,
         spektrum_test_loop,
-        NULL);
+        &argv[2]);
 
       unsigned constexpr max_wait_us = 1000000;
       unsigned constexpr max_wait_steps = 2000;
@@ -101,35 +95,47 @@ int spektrum_serial_test_main(int argc, char *argv[]) {
 		PX4_WARN("Action not supported");
   }
 
-
   return PX4_OK;
 }
 
-int spektrum_test_loop(int argc, char **argv) {
-  _serial_state = SERIAL_STATE_NONE;
-  char snd_arr[MAX_SERIAL_MSG_LEN];
-  int snd_arr_len = 0,
-      spektrum_fd = -1;
+//TODO update serial framework to use new messenger/manager 
+//     framework
+int spektrum_test_loop(int argc, char *argv[]) {
+  thread_running = true;
 
-  // Open file for UART
-  spektrum_fd = spektrum_serial_open(); 
+  _serial_state = SERIAL_STATE_NONE;
+
+  // Set up message manager
+  elka::BasicMessageMgr *msg_mgr=elka::BasicMessageMgr::instance();
+  int elka_msgr_d=msg_mgr->add_messenger(
+      MESSENGER_SERIAL,(void *)"/dev/tty-4");
+  // Create controller and get pointer copy of navigator
+  elka::BasicController *ctl=elka::BasicController::instance();
+  ctl->add_messenger(elka_msgr_d);
+  if (ctl->parse_plan_file(argv[0])) {
+    PX4_ERR("Failed to parse plan file %s",argv[0]);
+    return PX4_ERROR;
+  }
+  if (ctl->start()!=ELKA_SUCCESS) {
+    PX4_ERR("Failed to start controller");
+    return PX4_ERROR;
+  }
+  elka::BasicNavigator *nav=ctl->get_navigator();
 
   // Define poll_return for defined file descriptors
   int poll_ret;
 
-  struct input_rc_s input_rc;
-  memset(&input_rc, 0, sizeof(input_rc));
-  vehicle_local_position_s estimator_pos,
-                           vision_pos;
-  vehicle_attitude_s estimator_att,
-                     vision_att;
-  sensor_combined_s sensors;
+  input_rc_s input_rc;
+  vehicle_local_position_s vision_pos;
+  vehicle_attitude_s vision_att;
+  elka_msg_s elka_out;
+  elka_packet_s elka_pkt;
 
-  memset(&estimator_pos, 0, sizeof(estimator_pos));
-  memset(&estimator_att, 0, sizeof(estimator_att));
-  memset(&vision_pos, 0, sizeof(vision_pos));
+  memset(&input_rc,0,sizeof(input_rc));
+  memset(&vision_pos,0,sizeof(vision_pos));
   memset(&vision_att,0,sizeof(vision_att));
-  memset(&sensors,0,sizeof(sensors));
+  memset(&elka_out,0,sizeof(elka_out));
+  memset(&elka_pkt,0,sizeof(elka_pkt));
 
   // Subscribe to elka msg, elka msg ack, and input_rc (TODO only if necessary)
   // Vision position omes from MAVLink SLAM pose estimate
@@ -137,55 +143,20 @@ int spektrum_test_loop(int argc, char **argv) {
   int input_rc_sub_fd = orb_subscribe(ORB_ID(input_rc));
   int vision_pos_sub_fd = orb_subscribe(ORB_ID(vehicle_vision_position));
   int vision_att_sub_fd = orb_subscribe(ORB_ID(vehicle_vision_attitude));
-  int sensors_sub_fd = orb_subscribe(ORB_ID(sensor_combined));
-
-// If debugging, must not be receiving pose from built-in
-// LPE, EKF, etc filters. Instead, debugging mode sends back
-// local_position_ned via MAVLink on the
-// vehicle_{attitude|local_position} channels
-#if defined(ELKA_DEBUG) && defined(DEBUG_POSE)
-  orb_advert_t local_pos_pub, local_att_pub;
-  local_pos_pub=orb_advertise(ORB_ID(vehicle_local_position),
-                              &estimator_pos);
-  local_att_pub=orb_advertise(ORB_ID(vehicle_attitude),
-                              &estimator_att);
-#else
-  int estimator_pos_sub_fd = orb_subscribe(ORB_ID(vehicle_local_position));
-  int estimator_att_sub_fd = orb_subscribe(ORB_ID(vehicle_attitude));
-  orb_set_interval(estimator_pos_sub_fd, 10);
-  orb_set_interval(estimator_att_sub_fd, 10);
-#endif
 
   // Set update rate to 100Hz
   orb_set_interval(input_rc_sub_fd, 10);
   orb_set_interval(vision_pos_sub_fd, 10);
   orb_set_interval(vision_att_sub_fd, 10);
-  orb_set_interval(sensor_sub_fd, 10);
-
-  // Create estimator
-  elka::BasicNavigator nav = elka::BasicNavigator();
 
   uint8_t len_fds;
-  //FIXME sloppy but rn must define pos/att subs at the
-  //end of the px4_pollfd_struct_t array
-#if defined(ELKA_DEBUG) && defined(DEBUG_POSE)
   px4_pollfd_struct_t fds[] = {
     {.fd = input_rc_sub_fd, .events = POLLIN},
     {.fd = vision_pos_sub_fd, .events = POLLIN},
     {.fd = vision_att_sub_fd, .events = POLLIN},
   };
   len_fds=3;
-#else
-  px4_pollfd_struct_t fds[] = {
-    {.fd = input_rc_sub_fd, .events = POLLIN},
-    {.fd = sensor_sub_fd, .events = POLLIN}
-    {.fd = estimator_pos_sub_fd, .events = POLLIN},
-    {.fd = estimator_att_sub_fd, .events = POLLIN},
-    {.fd = vision_pos_sub_fd, .events = POLLIN},
-    {.fd = vision_att_sub_fd, .events = POLLIN},
-  };
-  len_fds=6;
-#endif
+
 
   // Set old message duration to 1/10 s
   set_old_msg_duration(100000);
@@ -197,16 +168,11 @@ int spektrum_test_loop(int argc, char **argv) {
            (hrt_callout)&serial_state_timeout_check,
            nullptr);
 
-  _new_setpoint = true;
   uint8_t msg_type;
-
-  uint8_t using_vision=3; // So far, vision gets precedence
 
   uint16_t spektrum_thrust = 0;
 
   int error_counter = 0;
-
-  thread_running = true;
 
   while (!thread_should_exit) {
     poll_ret = px4_poll(&fds[0], sizeof(fds)/sizeof(fds[0]), 500);
@@ -220,10 +186,22 @@ int spektrum_test_loop(int argc, char **argv) {
       if (error_counter < 10 || error_counter % 50 == 0) {
         // Use a counter to prevent flooding and slowing us down
         PX4_ERR("ERROR return value from poll(): %d", poll_ret);
+        thread_should_exit=true;
       }
 
       error_counter++;
     } else {
+
+
+#if defined(ELKA_DEBUG) && defined(DEBUG_SERIAL_WRITE)
+      if ((pack_test_msg(
+              &elka_pkt))
+           != PX4_ERROR) {
+        //pack_test_msg(&elka_pkt);
+        msg_mgr->send(elka_msgr_d,&elka_pkt);
+        usleep(10000);
+      }
+#endif
 
       if (fds[0].revents & POLLIN) { // input_rc
         orb_copy(ORB_ID(input_rc), input_rc_sub_fd, &input_rc);
@@ -253,438 +231,148 @@ int spektrum_test_loop(int argc, char **argv) {
         }
 
         if (check_state(msg_type) &&
-            (snd_arr_len = pack_spektrum_cmd(snd_arr,
-                                            msg_type,
-                                            &input_rc))
+            (pack_spektrum_cmd(
+                &elka_pkt,
+                msg_type,
+                &input_rc))
              != PX4_ERROR) {
-          if (spektrum_serial_write(spektrum_fd,
-                                    snd_arr, snd_arr_len) !=
-              spektrum_fd) {
-        PX4_WARN("Spektrum serial write failed for msg with timestamp: \
-%" PRIu64 "",
-            input_rc.timestamp);
-          } else {
-            // Must send new setpoint after successful spektrum write
-            nav.set_new_setpoint(true);
-            usleep(20000);
+          msg_mgr->send(elka_msgr_d,&elka_pkt);
+          // Must send new setpoint after successful write to ELKA
+          // from RC ctrlr
+          nav->reset_setpoints();
+          usleep(20000);
           }
         }
-      }
 
-      if (fds[1].revents & POLLIN) {
-        orb_copy(ORB_ID(sensor_combined),
-            sensor_sub_fd,
-            &sensors);
-        //TODO update _prev_sens array in estimator
-        nav.set_prev_inert_sens(&sensors);
-      }
-
-#ifndef ELKA_DEBUG
-      if (fds[len_fds-4].revents & POLLIN) { // estimator_pos 
-        orb_copy(ORB_ID(vehicle_local_position),
-                 estimator_pos_sub_fd,
-                 &estimator_pos);
-        using_vision&=2; // Bitmask 0 as first bit
-      }
-      if (fds[len_fds-3].revents & POLLIN) { // estimator_att
-        orb_copy(ORB_ID(vehicle_attitude),
-                 estimator_att_sub_fd,
-                 &estimator_att);
-        using_vision&=1; // Bitmask 0 as second bit
-      }
-#endif
-      if (fds[len_fds-2].revents & POLLIN) { // vision_pos 
+      if (fds[1].revents & POLLIN) { // vision_pos 
         orb_copy(ORB_ID(vehicle_vision_position),
                  vision_pos_sub_fd,
                  &vision_pos);
-        using_vision|=1; // Bitmask 1 as first bit
       }
-      if (fds[len_fds-1].revents & POLLIN) { // vision_att 
+      if (fds[2].revents & POLLIN) { // vision_att 
         orb_copy(ORB_ID(vehicle_vision_attitude),
                  vision_att_sub_fd,
                  &vision_att);
-        using_vision|=2; // Bitmask 1 as second bit
       }
 
-      if (using_vision & 3) { // vision_att and vision_pos
-        nav.update_pose(&vision_pos,&vision_att);
-      } else if (using_vision & 2) { // vision_att and estimator_pos
-        nav.update_pose(&estimator_pos,&vision_att);
-      } else if (using_vision & 1) { // estimator_att and vision_pos
-        nav.update_pose(&vision_pos,&estimator_att);
-      } else { // estimator_att and estimator_pos
-        nav.update_pose(&estimator_pos,&estimator_att);
-      }
+      nav->update_pose(&vision_pos,&vision_att);
 
-#if defined(ELKA_DEBUG) && defined(DEBUG_POSE)
-      nav.copy_pose_error(&estimator_pos,
-                          &estimator_att);
-      orb_publish(ORB_ID(vehicle_local_position),
-                  local_pos_pub,
-                  &estimator_pos);
-      orb_publish(ORB_ID(vehicle_attitude),
-                  local_att_pub,
-                  &estimator_att); 
-
-      static math::Vector<3> pos,ang,vel;
-      pos=nav.get_pose()->get_body(SECT_POS);
-      vel=nav.get_pose()->get_body(SECT_VEL);
-      ang=nav.get_pose()->get_body(SECT_ANG);
-      PX4_INFO("loc_x: %f, loc_y: %f,\
-loc_vx: %f, loc_vy: %f, loc_yaw: %f",
-               pos(0),pos(1),
-               vel(0),vel(1),
-               ang(2));
-#endif
-
-      if (nav.check_setpoint())
+      if (nav->_from_manual) {
         msg_type = MSG_TYPE_SETPOINT;
-      else if (!using_vision)
-        msg_type = MSG_TYPE_LOCAL_POS;
-      else
+				nav->hover();
+      } else
         msg_type = MSG_TYPE_VISION_POS;
 
-      //FIXME should pos and att should align with using_vision specs
       msg_set_serial_state(msg_type,
                            &vision_pos,
                            &vision_att);
       if (check_state(msg_type) &&
-          (pack_position_estimate(snd_arr,
-                                  msg_type,
-                                  nav.get_err())
+          (pack_position_estimate(&elka_pkt,
+                                  nav->get_err())
            != PX4_ERROR)) {
-        // Add on spektrum thrust to serial message
-        if (append_serial_msg(snd_arr,
-                              MSG_TYPE_THRUST,
-                              spektrum_thrust,
-                              sizeof(spektrum_thrust)) ==
-            PX4_ERROR) {
-          PX4_WARN("Could not append to serial message.");
-        }
-        snd_arr_len = *snd_arr+1;
-
-        if (spektrum_serial_write(spektrum_fd,
-                                  snd_arr, snd_arr_len) !=
-            spektrum_fd) {
-          PX4_WARN("Spektrum serial write failed for msg with timestamp: \
-%" PRIu64 "",
-              vision_pos.timestamp);
-        } else {
-          // Don't send new setpoint after successful setpoint write
-          nav.set_new_setpoint(false);
-          usleep(20000);
-        }
+        msg_mgr->send(elka_msgr_d,&elka_pkt);
+        usleep(20000);
       }
     }
+
+    // Parse packets received and reset packet to send
+    //TODO this should be threaded
+    msg_mgr->parse_packets();
+    elka_pkt.num_msgs=0;
+    elka_pkt.len=0;
   }
 
-  spektrum_fd = spektrum_serial_close(spektrum_fd); 
+  ctl->exit();
+  msg_mgr->remove_messenger(elka_msgr_d);
 
   thread_running = false;
 
   return PX4_OK;
 }
 
-int pack_position_estimate(char *snd_arr,
-                           uint8_t pos_type,
+int pack_position_estimate(elka_packet_s *snd,
                            pose_stamped_s *curr_err) {
-  int num_bytes = 0;
-  int32_t xe,ye,ze=0,vxe,vye,vze=0;
-  bool continue_packing = true;
+  // Error of form [xe,ye,ze,vxe,vye,vze,yawe,vyawe]
+  float e[8];
+  uint8_t data_len=32,data[32];
 
-  static math::Vector<3> pos_e;
-  static math::Vector<3> vel_e;
+  static math::Vector<12> body_pose_e;
 
-  pos_e=curr_err->get_body(SECT_POS);
-  vel_e=curr_err->get_body(SECT_VEL);
+  body_pose_e=curr_err->get_body_pose();
 
-  // Sending body frame error
-  xe = (int32_t)(pos_e(1)*10000);
-  ye = (int32_t)(-pos_e(0)*10000);
-  ze = (int32_t)(pos_e(2)*10000);
-  vxe = (int32_t)(vel_e(1)*10000);
-  vye = (int32_t)(-vel_e(0)*10000);
-  vze = (int32_t)(vel_e(2)*10000);
+  // Sending body frame error in mm/rad
+  e[0] = (float)(body_pose_e(1)*100);
+  e[1] = (float)(-body_pose_e(0)*100);
+  e[2] = (float)(body_pose_e(2)*100);
+  e[3] = (float)(body_pose_e(4)*100);
+  e[4] = (float)(-body_pose_e(3)*100);
+  e[5] = (float)(body_pose_e(5)*100);
+  e[6] = (float)body_pose_e(8);
+  e[7] = (float)body_pose_e(11);
 
 #if defined(ELKA_DEBUG) && defined(DEBUG_SERIAL)
-  PX4_INFO("xe: %" PRIi32 " ye: %" PRIi32 " ze: %" PRIi32 "\n\
-vxe: %" PRIi32 " vye: %" PRIi32 " vze: %" PRIi32 "",
-    xe,ye,ze,
-    vxe,vye,vze);
+  PX4_INFO("xe: %f ye: %f ze: %f\n\
+vxe: %f vye: %f vze: %f\n\
+yawe: %f vyawe: %f",
+    e[0],e[1],e[2],e[3],e[4],e[5],e[6],e[7]);
 #endif
 
-  while (num_bytes < MAX_SERIAL_MSG_LEN &&
-         continue_packing) {
-    if (num_bytes < 2 &&
-        (MAX_SERIAL_MSG_LEN - num_bytes >= 1)) {
-      // Pack length:
-      *snd_arr = 20;
-      snd_arr++; num_bytes++;
-      *snd_arr = 19;
-      snd_arr++; num_bytes++;
-    } else if (num_bytes < 5 &&
-        (MAX_SERIAL_MSG_LEN - num_bytes >= 3)) {
-      // Pack header defined as follows:
-      // state, 255, 255
-      //FIXME distinguish between vision_pos and local_pos
-      *snd_arr = pos_type;
-      snd_arr++; num_bytes++;
-      *snd_arr = 255;
-      snd_arr++; num_bytes++;
-      *snd_arr = 255;
-      snd_arr++; num_bytes++;
-    } else if (num_bytes < 21 &&
-        (MAX_SERIAL_MSG_LEN - num_bytes >= 12)) {
-      *snd_arr = get_byte_n((int64_t)xe,4);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)xe,3);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)xe,2);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)xe,1);
-      snd_arr++; num_bytes++;
+  serialize(&(data[0]),&e,8*sizeof(float));
 
-      *snd_arr = get_byte_n((int64_t)ye,4);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)ye,3);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)ye,2);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)ye,1);
-      snd_arr++; num_bytes++;
-
-      /*
-      *snd_arr = get_byte_n((int64_t)ze,4);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)ze,3);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)ze,2);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)ze,1);
-      snd_arr++; num_bytes++;
-      */
-
-      *snd_arr = get_byte_n((int64_t)vxe,4);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)vxe,3);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)vxe,2);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)vxe,1);
-      snd_arr++; num_bytes++;
-
-      *snd_arr = get_byte_n((int64_t)vye,4);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)vye,3);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)vye,2);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)vye,1);
-      snd_arr++; num_bytes++;
-      
-      /*
-      *snd_arr = get_byte_n((int64_t)vze,4);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)vze,3);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)vze,2);
-      snd_arr++; num_bytes++;
-      *snd_arr = get_byte_n((int64_t)vze,1);
-      snd_arr++; num_bytes++;
-      */
-
-      continue_packing = false;
-    }
-    // Add the following if you intend to send gains
-    /* else if (num_bytes < 19 &&
-        (MAX_SERIAL_MSG_LEN - num_bytes >=4)) {
-      
-      *snd_arr = (_gains.pos_kp >> 8) & 0xff;
-      snd_arr++; num_bytes++;
-      *snd_arr = (_gains.pos_kp) & 0xff;
-      snd_arr++; num_bytes++;
-      *snd_arr = (_gains.pos_kd >> 8) & 0xff;
-      snd_arr++; num_bytes++;
-      *snd_arr = (_gains.pos_kd) & 0xff;
-      snd_arr++; num_bytes++;
-                           
-      continue_packing = false;
-      
-    }*/
-    else {
-      PX4_ERR("position estimate could not be packed. Message too long.");
-      continue_packing = false;
-      return PX4_ERROR;
-    }
-  }
-
-  return num_bytes;
+  return append_pkt(
+          snd,
+          MSG_TYPE_VISION_POS,
+          data_len,
+          data);
 }
 
-int pack_position_estimate(char *snd_arr,
-                           uint8_t pos_type, 
-                           pose_stamped_s *curr_err,
-                           uint16_t thrust) {
-  int num_bytes = pack_position_estimate(snd_arr,pos_type,curr_err);
-  if (num_bytes + 2 < MAX_SERIAL_MSG_LEN) {
-    *snd_arr += 2;
-    *(snd_arr+1) += 2;
-    *(snd_arr+num_bytes) = get_byte_n((uint64_t)thrust,2);
-    *(snd_arr+num_bytes+1) = get_byte_n((uint64_t)thrust,1);
-    //*(snd_arr+num_bytes) = 0;
-    //*(snd_arr+num_bytes+1) = 1;
-    num_bytes+=2;
-    return num_bytes;
-  } else {
-    return PX4_ERROR;
-  }
-}
-
-int pack_spektrum_cmd(char *snd_arr,
+int pack_spektrum_cmd(elka_packet_s *snd,
                       uint8_t msg_type,
                       input_rc_s *input_rc) {
   if (msg_type == MSG_TYPE_KILL)
-    return pack_kill_msg(snd_arr, input_rc);
+    return pack_kill_msg(snd, input_rc);
   else if (msg_type == MSG_TYPE_SPEKTRUM)
-    return pack_input_rc_joysticks(snd_arr, input_rc);
+    return pack_input_rc_joysticks(snd, input_rc);
   else
     return PX4_ERROR;
 }
 
-int pack_kill_msg(char *snd_arr, input_rc_s *input_rc) {
-  int num_bytes = 0;
-  bool continue_packing = true;
+int pack_kill_msg(elka_packet_s *snd, input_rc_s *input_rc) {
+  uint8_t data_len=8,data[8];
 
-  while (num_bytes < MAX_SERIAL_MSG_LEN &&
-         continue_packing) {
-    if (num_bytes < 2 &&
-          (MAX_SERIAL_MSG_LEN - num_bytes >= 1)) {
-        // Pack length:
-        *snd_arr = 12;
-        snd_arr++; num_bytes++;
-        *snd_arr = 11;
-        snd_arr++; num_bytes++;
-    } else if (num_bytes < 5 &&
-          (MAX_SERIAL_MSG_LEN - num_bytes >= 4)) {
-        *snd_arr = MSG_TYPE_KILL;
-        snd_arr++; num_bytes++;
-        *snd_arr = 255;
-        snd_arr++; num_bytes++;
-        *snd_arr = 255;
-        snd_arr++; num_bytes++;
+  serialize(&(snd->data[0]),&(input_rc->values[0]),2);
+  serialize(&(snd->data[2]),&(input_rc->values[1]),2);
+  serialize(&(snd->data[4]),&(input_rc->values[2]),2);
+  serialize(&(snd->data[6]),&(input_rc->values[3]),2);
+  return append_pkt(
+          snd,
+          MSG_TYPE_KILL,
+          data_len,
+          data);
+}
 
-    } else if ((num_bytes < 9 +
-                            2*NUM_JOYSTICK_CHANNELS) &&
-      (MAX_SERIAL_MSG_LEN - num_bytes >= 2*NUM_JOYSTICK_CHANNELS)) {
-      // up to 36B channel pwms ranging from 1000-2000
-      for (uint8_t i=0; i < NUM_JOYSTICK_CHANNELS; i++){
-        *snd_arr = (input_rc->values[i] >> 8) & 0xff;
-        snd_arr++; num_bytes++;
-        *snd_arr = input_rc->values[i] & 0xff;
-        snd_arr++; num_bytes++;
-        PX4_INFO("channel %d value: %d", i, input_rc->values[i]);
-        //PX4_INFO("next byte: %du",
-        //    (*(snd_arr-1) << 8) | (*(snd_arr-2)));
-      }
+int pack_input_rc_joysticks(elka_packet_s *snd, input_rc_s *input_rc) {
+  uint8_t data_len=8,data[8];
 
-      continue_packing = false;
-    } else {
-      PX4_ERR("position estimate could not be packed. Message too long.");
-      continue_packing = false;
-      return PX4_ERROR;
-    }
+  serialize(&(snd->data[0]),&(input_rc->values[0]),2);
+  serialize(&(snd->data[2]),&(input_rc->values[1]),2);
+  serialize(&(snd->data[4]),&(input_rc->values[2]),2);
+  serialize(&(snd->data[6]),&(input_rc->values[3]),2);
+  return append_pkt(
+          snd,
+          MSG_TYPE_KILL,
+          data_len,
+          data);
+}
+
+int pack_test_msg(elka_packet_s *snd) {
+  uint8_t data_len=6,data[6]={0,1,0,1,0,1};
+  return append_pkt(
+          snd,
+          MSG_TYPE_TEST,
+          data_len,
+          data);
   }
-
-  return num_bytes;
-}
-
-int pack_input_rc_joysticks(char *snd_arr, input_rc_s *spektrum) {
-  int num_bytes = 0;
-  bool continue_packing = true;
-
-  while (num_bytes < MAX_SERIAL_MSG_LEN &&
-         continue_packing) {
-
-    if (num_bytes < 2 &&
-        (MAX_SERIAL_MSG_LEN - num_bytes >= 1)) {
-      // Pack length:
-      *snd_arr = 12;
-      snd_arr++; num_bytes++;
-      *snd_arr = 11;
-      snd_arr++; num_bytes++;
-    } else if (num_bytes < 5 &&
-        (MAX_SERIAL_MSG_LEN - num_bytes >= 4)) {
-      // Pack header defined as follows:
-      //   msg type, 255, 255 
-      *snd_arr = MSG_TYPE_SPEKTRUM;
-      snd_arr++; num_bytes++;
-      *snd_arr = 255;
-      snd_arr++; num_bytes++;
-      *snd_arr = 255;
-      snd_arr++; num_bytes++;
-    } else if ((num_bytes < 5+
-                            2*NUM_JOYSTICK_CHANNELS) &&
-        (MAX_SERIAL_MSG_LEN - num_bytes >= 2*NUM_JOYSTICK_CHANNELS)) {
-      // up to 36B channel pwms ranging from 1000-2000
-      for (uint8_t i=0; i < NUM_JOYSTICK_CHANNELS; i++){
-        *snd_arr = (spektrum->values[i] >> 8) & 0xff;
-        snd_arr++; num_bytes++;
-        *snd_arr = spektrum->values[i] & 0xff;
-        snd_arr++; num_bytes++;
-        PX4_INFO("channel %d value: %d", i, spektrum->values[i]);
-        //PX4_INFO("next byte: %du",
-        //    (*(snd_arr-1) << 8) | (*(snd_arr-2)));
-      }
-
-      continue_packing = false;
-    } else {
-      PX4_ERR("input_rc could not be packed. Message too long.");
-      continue_packing = false;
-      return PX4_ERROR;
-    }
-  }
-
-  return num_bytes;
-}
-
-void write_serial_header(
-    char *snd_arr,
-    uint16_t len,
-    uint8_t msg_type) {
-  *(snd_arr) = len;
-  *(snd_arr+1) = msg_type;
-  *(snd_arr+2) = SERIAL_HEADER_ASSURANCE_BYTE;
-  *(snd_arr+3) = SERIAL_HEADER_ASSURANCE_BYTE;
-}
-
-int append_serial_msg(char *snd_arr,
-                      uint8_t msg_type,
-                      uint16_t bytes,
-                      uint16_t len) {
-  uint16_t curr_global_len = *(snd_arr)+1,
-           new_msg_len = len+SERIAL_HEADER_LEN+1;
-
-  if (!(curr_global_len+new_msg_len < MAX_SERIAL_MSG_LEN)) {
-    PX4_DEBUG("Not enough room in packet to append serial message");
-    return PX4_ERROR;
-  }
-
-  *(snd_arr+curr_global_len) = new_msg_len;
-
-  write_serial_header(
-      &(*(snd_arr+curr_global_len)),
-      new_msg_len-1,
-      msg_type);
-
-  for (uint8_t i=SERIAL_HEADER_LEN+1; i<new_msg_len; i++)
-    *(snd_arr+curr_global_len+i) =
-      get_byte_n((uint64_t)bytes,new_msg_len-i);
-  
-  // Set new global length
-  *(snd_arr) = curr_global_len-1+new_msg_len;
-  // Return new total packet length
-  return curr_global_len+new_msg_len;
-}
 
 void serial_state_timeout_check(void *arg) {
   static hrt_abstime timeout_duration;
@@ -692,12 +380,7 @@ void serial_state_timeout_check(void *arg) {
   if (hrt_absolute_time() - _prev_spektrum_update > timeout_duration) {
     _serial_state = SERIAL_STATE_NONE;
   }
-  /*
-  static int i=0;
-  i++;
-  if (!(i%100))
-    PX4_INFO("serial state: %d", _serial_state);
-    */
+
 }
 
 void msg_set_serial_state(int msg_type, input_rc_s *input_rc) {
@@ -708,7 +391,6 @@ void msg_set_serial_state(int msg_type, input_rc_s *input_rc) {
       _serial_state = SERIAL_STATE_SPEKTRUM;
     } else {
       // Must set to none if none of the switches are flipped
-      // so that _serial_state can switch to lower-priority state
       // in the event that controller inputs continue streaming
       _serial_state = SERIAL_STATE_NONE;
     }
@@ -762,9 +444,3 @@ void set_old_msg_duration(hrt_abstime time) {
   _old_msg_duration = time;
 }
 
-/*
-static void set_gains() {
-  _gains.pos_kp = 0;
-  _gains.pos_kd = 0;
-}
-*/

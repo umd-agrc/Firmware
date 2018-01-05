@@ -4,6 +4,8 @@ px4_add_module(
 	STACK_MAIN 1600
 	COMPILE_FLAGS
 	SRCS
+		serial_defines.h
+		spektrum_serial_test.h
 		spektrum_serial_test.cpp
 		basic_uart.h
 		basic_uart.cpp
@@ -11,6 +13,14 @@ px4_add_module(
 		basic_navigator.cpp
 		basic_estimator.h
 		basic_estimator.cpp
+		basic_control.h
+		basic_control.cpp
+		basic_comm.h
+		basic_comm.cpp
+		basic_messenger.h
+		basic_messenger.cpp
+		#genann.h
+		#genann.cpp
 	DEPENDS
 		platforms__common
 	)

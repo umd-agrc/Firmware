@@ -22,15 +22,15 @@ elka::BasicEstimator::~BasicEstimator() {
 
 void elka::BasicEstimator::set_prev_inert_sens(sensor_combined_s *s) {
   _prev_acc.set_data(
-      s->timestamp+s->accelerometer_timestamp_relative;
-      {accelerometer_m_s2[0],
-       accelerometer_m_s2[1],
-       accelerometer_m_s2[2]});
+      s->timestamp+s->accelerometer_timestamp_relative,
+      {s->accelerometer_m_s2[0],
+       s->accelerometer_m_s2[1],
+       s->accelerometer_m_s2[2]});
   _prev_acc.set_data(
-      s->timestamp
-      {gyro_rad[0],
-       gyro_rad[1],
-       gyro_rad[2]});
+      s->timestamp,
+      {s->gyro_rad[0],
+       s->gyro_rad[1],
+       s->gyro_rad[2]});
 }
 
 pose_stamped_s *elka::BasicEstimator::get_pose() {
@@ -107,17 +107,21 @@ void elka::BasicEstimator::low_pass_filt(
         dt=((float)(_curr_pose.t[i-3]-_prev_filt_pose.t[i]))*1e-6;
         if (dt < DT_MIN) dt=DT_MIN;
         t=_curr_pose.t[i-3];
-        s_samp=(_curr_pose.pose(i-3)-_prev_pose.pose(i-3))/
-               (dt);
-        s=alpha*s_samp+(1-alpha)*_prev_filt_pose.pose(i);
-#if defined(ELKA_DEBUG) && defined(DEBUG_FILTER)
-        PX4_INFO("dt: %f, s_samp: %f, s: %f",
-            dt,s_samp,s);
-#endif
-
+        s_samp=(_curr_pose.pose(i-3)-_prev_pose.pose(i-3))/dt;
       } else if (i==10 || i==11 || i==12) {
-        //TODO derivative of quaternion
+        math::Vector<3> v_curr=_curr_pose.get_body_pose(SECT_ANG),
+                        v_prev=_prev_pose.get_body_pose(SECT_ANG);
+
+        // Assume all quaternion properties updated at the same time
+        dt=((float)(_curr_pose.t[6]-_prev_pose.t[i]))*1e-6;
+        s_samp=(v_curr(i-10)-v_prev(i-10))/dt;
       }
+
+      s=alpha*s_samp+(1-alpha)*_prev_filt_pose.pose(i);
+#if defined(ELKA_DEBUG) && defined(DEBUG_FILTER)
+      PX4_INFO("dt: %f, s_samp: %f, s: %f",
+          dt,s_samp,s);
+#endif
 
       set_pose(i,t,s);  
       _prev_filt_pose.set_pose(i,t,s); // Used for next call
@@ -127,7 +131,7 @@ void elka::BasicEstimator::low_pass_filt(
   }
 }
 
-void BasicEstimator::ekf() {
+void elka::BasicEstimator::ekf() {
   // Using state matrix x:
   //    p=posiiton_cam
   //    q=rotation_cam
@@ -151,14 +155,14 @@ void BasicEstimator::ekf() {
   //         R = body->inertial rotation matrix
 
   // Define f(mu_{t-1},u_t,0)
-  static math::Vector<STATE_LEN_EKF> prev_mean_update(),
-                                     mu_bar_t(),
-                                     mu_t(),
-                                     b();
-  static math::Matrix<STATE_LEN_EKF,STATE_LEN_EKF_ODOM> A(),
-                                                        F();
-  static math::Matrix<STATE_LEN_EKF,STATE_LEN_EKF_BIAS> U(),
-                                                        V();
+  static math::Vector<STATE_LEN_EKF> prev_mea_update,
+                                     mu_bar_t,
+                                     mu_t,
+                                     b;
+  static math::Matrix<STATE_LEN_EKF,STATE_LEN_EKF_ODOM> A,
+                                                        F;
+  static math::Matrix<STATE_LEN_EKF,STATE_LEN_EKF_BIAS> U,
+                                                        V;
 
   // Define convenience vars for jacobians A,U,F,V,b
   // A=df/dx|(mu_{t-1},u_t,0)
@@ -174,7 +178,7 @@ void BasicEstimator::ekf() {
 
   // Update _prev_filt_pose for use later to update
   // prev_mean_update
-  _prev_filt_pose.set_pose(&curr_pose);
+  _prev_filt_pose.set_pose(&_curr_pose);
   
   // Define convenience jacobians vars for jacobians C,W
 
@@ -184,7 +188,7 @@ void BasicEstimator::ekf() {
   
   // Update mu_t and update prev_mean_update
 
-  prev_mean_update = mu_t-_prev_filt_pose;
+  //prev_mean_update = mu_t-_prev_filt_pose;
 
   // Update Sigma_t
 
