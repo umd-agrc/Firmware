@@ -127,7 +127,8 @@ struct sensor_stamped_s {
 };
 
 struct pose_stamped_s {
-  hrt_abstime t[STATE_LEN];
+  bool initialized,timeout,hold,land;
+  hrt_abstime init_time,t[STATE_LEN];
   math::Vector<STATE_LEN>pose;
   math::Quaternion q;
   math::Vector<3> eul,body_pos,body_vel;
@@ -136,14 +137,40 @@ struct pose_stamped_s {
   math::Matrix<3,3> offset_r;
 
   pose_stamped_s() {
+    initialized=false;
     memset(t,0,sizeof(t));
   }
   pose_stamped_s(hrt_abstime tau,
                  math::Vector<STATE_LEN> *v) {
+    initialized=false;
+    set_pose(tau,v);
+  }
+  //Use this initializer if using pose as setpoint
+  pose_stamped_s(hrt_abstime tau,
+      uint8_t param_mask,
+      math::Vector<STATE_LEN> *v) {
+    initialized=false;
+    timeout=false;
+    hold=param_mask&SETPOINT_PARAM_HOLD;
+    land=param_mask&SETPOINT_PARAM_LAND;
     set_pose(tau,v);
   }
   pose_stamped_s(pose_stamped_s *p) {
+    initialized=false;
     set_pose(p);
+  }
+  // Update pose parameters
+  // Useful for setpoints
+  void update() {
+    if (!initialized) {
+      initialized=true;
+      init_time=hrt_absolute_time();
+    }
+    if (!hold &&
+        init_time+t[0]
+        <hrt_absolute_time()) {
+      timeout=true;
+    }
   }
   // Offset rot in Euler angles
   // Offset trans in meters
@@ -211,7 +238,7 @@ struct pose_stamped_s {
     body_pos(0)=pose(0);
     body_pos(1)=pose(1);
     body_pos(2)=pose(2);
-    body_pos=rot*body_vel;
+    body_pos=rot*body_pos;
     body_vel(3)=pose(3);
     body_vel(4)=pose(4);
     body_vel(5)=pose(5);

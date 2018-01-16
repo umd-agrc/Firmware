@@ -27,12 +27,20 @@
 // Define error threshold as norm({*_ERROR_THRES})
 #define ERROR_THRES 1 
 
+// Define error height close to ground in meters
+#define LANDING_HEIGHT_EPSILON 0.1
+
 #define POSITION_LEN 5
 
 namespace elka {
   class BasicNavigator;
   struct PlanElement;
 }
+
+struct setpoint_s {
+  hrt_abstime _dt,_start;
+  std::vector<math::Vector<SETPOINT_FUNCTION_ORDER>> _coefs;
+};
 
 // PlanElement includes type and 3D 
 // Not every PlanElement includes 3D
@@ -47,7 +55,7 @@ struct elka::PlanElement {
   std::vector<math::Vector<POSITION_LEN>> _positions;
   hrt_abstime _dt,_start,_init_time;
   uint8_t _type; 
-  bool _begun,_completed;
+  bool _begun,_completed,_timeout;
 
   PlanElement(uint8_t t,hrt_abstime time)
     : _dt(time),_type(t),_begun(false),_completed(false)
@@ -76,6 +84,19 @@ struct elka::PlanElement {
     }
   }
 
+  // Update parameters based off of elapsed time
+  void update() {
+    if (!_begun) {
+      _begun=true;
+      _start=hrt_absolute_time();
+    }
+
+    if (_start+_dt<hrt_absolute_time()) {
+      _timeout=true;
+      _completed=true;
+    }
+  }
+
 	void print_element() {
 		PX4_INFO("Element type: %d\nTime: %" PRIu64 "+%" PRIu64"\n"
 			"Num positions: %zu",
@@ -95,7 +116,6 @@ private:
   elka::BasicEstimator _est; // estimated state in elka inertial frame
   std::vector<pose_stamped_s> _setpoints; // stores current setpoint
   pose_stamped_s _curr_err;
-  pose_stamped_s _prev_min_err;
 	// Store transformation from elka
 	// to snapdragon
   math::Matrix<3,3> _elka_sf_r;
@@ -106,7 +126,7 @@ public:
   ~BasicNavigator();
 
 	//TODO make private and have getters
-  bool _at_setpoint,_new_setpoint,_from_manual;
+  bool _at_setpoint,_new_setpoint,_from_manual,_landed,_wait,_kill;
 
   // Set offset from sensor to fcu
   void set_fcu_offset(math::Vector<3> *r, math::Vector<3> *t);
@@ -115,9 +135,7 @@ public:
   float get_pose(uint8_t n);
   pose_stamped_s *get_err();
   float get_err(uint8_t n);
-  pose_stamped_s *get_prev_min_err();
-  float get_prev_min_err(uint8_t n);
-  pose_stamped_s *get_next_setpoint();
+  void next_setpoint();
 
   void set_prev_inert_sens(sensor_combined_s *s);
   void set_pose(hrt_abstime t,math::Vector<STATE_LEN>*v);
@@ -126,26 +144,29 @@ public:
   void set_err(hrt_abstime t,math::Vector<STATE_LEN>*v);
   void set_err(hrt_abstime t[STATE_LEN],math::Vector<STATE_LEN>*v);
   void set_err(pose_stamped_s *p);
-  void set_prev_min_err(hrt_abstime t,math::Vector<STATE_LEN>*v);
-  void set_prev_min_err(hrt_abstime t[STATE_LEN],math::Vector<STATE_LEN>*v);
-  void set_prev_min_err(pose_stamped_s *p);
 
   // Update poses and stores position/velocity in ELKA body frame
   // Corrects for Snapdragon<->ELKA offset
+  // If current setpoint expired, sets next setpoint
   void update_pose(vehicle_local_position_s *p,
                    vehicle_attitude_s *a);
 	// Clear setpoints 
-  void add_setpoint(hrt_abstime t,math::Vector<STATE_LEN>*v);
+  void add_setpoint(
+      hrt_abstime t,uint8_t param_mask,math::Vector<STATE_LEN>*v);
+  uint8_t takeoff(float z,bool hold);
 	// Generate hover setpoint
 	// Hover at current {x,y,z,yaw} for default length of time
 	//TODO maintain yaw
-	void hover();
+	uint8_t hover(bool hold);
+	uint8_t land(bool hold);
   void reset_setpoints();
 	bool at_setpoint();
-
   // Load positions into setpoints from a vector of positions
   // These positions are typically from a elka::PlanElement
-  int8_t generate_setpoints(std::vector<math::Vector<POSITION_LEN>> p);
+  int8_t generate_setpoints(
+      std::vector<math::Vector<POSITION_LEN>> p);
+  void print_setpoints();
+  void update_error(pose_stamped_s *curr_setpoint);
 
   void copy_pose_error(
       vehicle_local_position_s *p,

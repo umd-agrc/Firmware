@@ -60,8 +60,7 @@ int append_pkt(elka_packet_s *snd,
   }
 
   write_msg_header(snd,snd->len,data_len,msg_type);
-  serialize(&(snd->data[snd->len]),
-      data,data_len);
+  serialize(&(snd->data[snd->len]),data,data_len);
   snd->len+=data_len;
   // Update num msgs
   snd->num_msgs++;

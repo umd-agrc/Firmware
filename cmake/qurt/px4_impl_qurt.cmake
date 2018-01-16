@@ -182,11 +182,15 @@ function(px4_os_add_flags)
 	# Add the toolchain specific flags
 	set(added_c_flags
 		-Wno-unknown-warning-option
+		-Wno-error=unused-command-line-argument
+		-Wno-unused-command-line-argument
 		)
 
 	set(added_cxx_flags
 		-Wno-unknown-warning-option
 		-Wno-unreachable-code
+		-Wno-error=unused-command-line-argument
+		-Wno-unused-command-line-argument
 		)
 
 	set(added_optimization_flags

@@ -17,6 +17,8 @@ elka::BasicNavigator::BasicNavigator() {
   // Translation from sf to elka
   math::Vector<3> offset_t = {-0.13,0,-0.05};
   set_fcu_offset(&offset_r,&offset_t);
+  _at_setpoint=false;_new_setpoint=false;
+  _wait=false;_landed=false;_from_manual=false;_kill=false;
 }
 
 elka::BasicNavigator::~BasicNavigator() {
@@ -57,21 +59,34 @@ float elka::BasicNavigator::get_err(uint8_t n){
     return _curr_err.pose(n);
 }
 
-pose_stamped_s *elka::BasicNavigator::get_prev_min_err() {
-  return &_prev_min_err;
-}
-
-float elka::BasicNavigator::get_prev_min_err(uint8_t n){
-  if (n > STATE_LEN) {
-    PX4_ERR("Invalid prev min err index %d",n);
-    return PX4_ERROR;
-  } else
-    return _prev_min_err.pose(n);
-}
-
-pose_stamped_s *elka::BasicNavigator::get_next_setpoint() {
-//TODO is top a method?
-  return &_setpoints.front();
+void elka::BasicNavigator::next_setpoint() {
+  if (!_setpoints.empty()) {
+    _setpoints.front().update();
+    // Handle case setpoint timeout
+    if (_setpoints.front().timeout) {
+      _setpoints.erase(_setpoints.begin());
+      usleep(5000);
+      if (!_setpoints.empty()) {
+        _setpoints.front().update();
+      }
+    }
+    update_error(&_setpoints.front());
+    bool b=at_setpoint();
+    // Handle case at setpoint 
+    // TODO clean this up
+    if (b) {
+      if (_setpoints.front().land)
+        _landed=true;
+      else _landed = false;
+      if (!_setpoints.front().hold) {
+        _setpoints.erase(_setpoints.begin());
+        if (!_setpoints.empty()) {
+          _setpoints.front().update();
+          update_error(&_setpoints.front());
+        }
+      }
+    } else _landed=false;
+  }
 }
 
 void elka::BasicNavigator::set_prev_inert_sens(
@@ -105,22 +120,6 @@ void elka::BasicNavigator::set_err(hrt_abstime t[STATE_LEN],
 
 void elka::BasicNavigator::set_err(pose_stamped_s *p) {
   _curr_err.set_pose(p);
-}
-
-void elka::BasicNavigator::set_prev_min_err(
-    hrt_abstime t,
-    math::Vector<STATE_LEN>*v) {
-  _prev_min_err.set_pose(t,v);
-}
-
-void elka::BasicNavigator::set_prev_min_err(
-    hrt_abstime t[STATE_LEN],
-    math::Vector<STATE_LEN>*v) {
-  _prev_min_err.set_pose(t,v);
-}
-
-void elka::BasicNavigator::set_prev_min_err(pose_stamped_s *p) {
-  _prev_min_err.set_pose(p);
 }
 
 void elka::BasicNavigator::update_pose(vehicle_local_position_s *p,
@@ -191,16 +190,11 @@ void elka::BasicNavigator::update_pose(vehicle_local_position_s *p,
   // Low pass filter to set estimator velocity
   _est.low_pass_filt(filt_states);
 
-  //FIXME Inefficient way to do this.
-  //      Should happen all at once.
-  // Set Elka inertial error
-  // In this case, we don't set angle error, just angle so that
-  // we can retrieve body position from absolute angles
-  _curr_err.pose=_est.get_pose()->pose-get_next_setpoint()->pose;
-  _curr_err.pose(6)=_est.get_pose(6);
-  _curr_err.pose(7)=_est.get_pose(7);
-  _curr_err.pose(8)=_est.get_pose(8);
-  _curr_err.pose(9)=_est.get_pose(9);
+  // Set Elka inertial error and next setpoint
+  // In this case, we don't set angle error
+  // Set absolute angle so that we can retrieve body position
+  // from absolute angles
+  next_setpoint();
 
 #if defined(ELKA_DEBUG) && defined(DEBUG_TRANSFORM)
     PX4_INFO("curr_err: %3.3f,%3.3f,%3.3f",
@@ -209,34 +203,93 @@ void elka::BasicNavigator::update_pose(vehicle_local_position_s *p,
 }
 
 void elka::BasicNavigator::add_setpoint(
-	hrt_abstime t,math::Vector<STATE_LEN>*v) {
+	hrt_abstime dt,uint8_t param_mask,math::Vector<STATE_LEN>*v) {
 	math::Vector<3> offset_rot,
 									offset_trans;
 	offset_rot=
 		_elka_sf_r.inversed().to_euler();
 	offset_trans=-_elka_sf_t;
-	pose_stamped_s p(t,v);
+	pose_stamped_s p(dt,param_mask,v);
   p.set_offset(&offset_rot,
 							 &offset_trans);
 	_setpoints.push_back(p);
 }
 
-void elka::BasicNavigator::hover() {
-  math::Vector<STATE_LEN> tmp=math::Vector<STATE_LEN>();
+uint8_t elka::BasicNavigator::takeoff(float z,bool hold) {
+  math::Vector<STATE_LEN> tmp;
 	hrt_abstime t;
-	t=PLAN_ELEMENT_DEFAULT_LEN;
+  float eps;
+  uint8_t param_mask=0;
+	t=TAKEOFF_SETPOINT_DEFAULT_LEN;
+	tmp=get_pose()->pose;
+  tmp(3)=0;
+	tmp(4)=0;
+	tmp(5)=0;
+	tmp(10)=0;
+	tmp(11)=0;
+	tmp(12)=0;
+  float dz=0;
+  tmp(2)=dz;
+  eps=fabs(z-dz);
+  if (eps<POSITION_EPSILON)
+    if (hold) param_mask|=SETPOINT_PARAM_HOLD;
+  add_setpoint(t,param_mask,&tmp);
+  while (eps>POSITION_EPSILON) {
+    dz=dz+(z-dz)/2;
+    eps=fabs(z-dz);
+    tmp(2)=dz;
+    if (eps<POSITION_EPSILON)
+      if (hold) param_mask|=SETPOINT_PARAM_HOLD;
+    add_setpoint(t,param_mask,&tmp);
+  }
+  return ELKA_SUCCESS;
+}
+uint8_t elka::BasicNavigator::hover(bool hold) {
+  math::Vector<STATE_LEN> tmp;
+	hrt_abstime t;
+  uint8_t param_mask=0;
+  if (hold) param_mask|=SETPOINT_PARAM_HOLD;
+	t=SETPOINT_DEFAULT_LEN;
+  // For hover, keep current x,y,z
 	tmp=get_pose()->pose;
 	tmp(3)=0;
 	tmp(4)=0;
 	tmp(5)=0;
-	tmp(6)=0;
-	tmp(7)=0;
-	tmp(8)=0;
-	tmp(9)=0;
 	tmp(10)=0;
 	tmp(11)=0;
 	tmp(12)=0;
-  add_setpoint(t,&tmp);
+  add_setpoint(t,param_mask,&tmp);
+  return ELKA_SUCCESS;
+}
+
+uint8_t elka::BasicNavigator::land(bool hold) {
+  math::Vector<STATE_LEN> tmp;
+	hrt_abstime t;
+  uint8_t param_mask=0;
+	t=LANDING_SETPOINT_DEFAULT_LEN;
+	tmp=get_pose()->pose;
+  tmp(3)=0;
+	tmp(4)=0;
+	tmp(5)=0;
+	tmp(10)=0;
+	tmp(11)=0;
+	tmp(12)=0;
+  float z=tmp(2);
+  // Check if landed. Can land lower than LAND_DEFAULT_HEIGHT,
+  // but not higher
+  if (z-LAND_DEFAULT_HEIGHT<LANDING_HEIGHT_EPSILON) {
+    if (hold) param_mask|=SETPOINT_PARAM_LAND|SETPOINT_PARAM_HOLD;
+  }
+  add_setpoint(t,param_mask,&tmp);
+  while (z-LAND_DEFAULT_HEIGHT>LANDING_HEIGHT_EPSILON) {
+    z-=(z-LAND_DEFAULT_HEIGHT)/1.5;
+    tmp(2)=z;
+    if (z-LAND_DEFAULT_HEIGHT<LANDING_HEIGHT_EPSILON) {
+      if (hold) param_mask|=SETPOINT_PARAM_LAND|SETPOINT_PARAM_HOLD;
+    }
+    add_setpoint(t,param_mask,&tmp);
+  }
+  return ELKA_SUCCESS;
 }
 
 void elka::BasicNavigator::reset_setpoints() {
@@ -245,19 +298,6 @@ void elka::BasicNavigator::reset_setpoints() {
   _curr_err.set_pose(t,&tmp);
 	_setpoints.clear();
 	
-  _prev_min_err.set_pose(0,t,POSITION_ERROR_THRES);
-  _prev_min_err.set_pose(1,t,POSITION_ERROR_THRES);
-  _prev_min_err.set_pose(2,t,POSITION_ERROR_THRES);
-  _prev_min_err.set_pose(3,t,VELOCITY_ERROR_THRES);
-  _prev_min_err.set_pose(4,t,VELOCITY_ERROR_THRES);
-  _prev_min_err.set_pose(5,t,VELOCITY_ERROR_THRES);
-  _prev_min_err.set_pose(6,t,ANGLE_ERROR_THRES);
-  _prev_min_err.set_pose(7,t,ANGLE_ERROR_THRES);
-  _prev_min_err.set_pose(8,t,ANGLE_ERROR_THRES);
-  _prev_min_err.set_pose(9,t,ANGLE_ERROR_THRES);
-  _prev_min_err.set_pose(10,t,ANGLE_RATE_ERROR_THRES);
-  _prev_min_err.set_pose(11,t,ANGLE_RATE_ERROR_THRES);
-  _prev_min_err.set_pose(12,t,ANGLE_RATE_ERROR_THRES);
   _at_setpoint=false;
   _new_setpoint=true;
 }
@@ -272,9 +312,49 @@ bool elka::BasicNavigator::at_setpoint() {
   return _at_setpoint;
 }
 
+void elka::BasicNavigator::update_error(pose_stamped_s *curr_setpoint) {
+  if (curr_setpoint) {
+    _curr_err.pose=_est.get_pose()->pose-curr_setpoint->pose;
+    _curr_err.pose(6)=_est.get_pose(6);
+    _curr_err.pose(7)=_est.get_pose(7);
+    _curr_err.pose(8)=_est.get_pose(8);
+    _curr_err.pose(9)=_est.get_pose(9);
+  } else {
+    _curr_err.pose.zero();
+    //TODO move to next_setpoint() function
+    _wait=true;
+  }
+}
+
 int8_t elka::BasicNavigator::generate_setpoints(
     std::vector<math::Vector<POSITION_LEN>> p) {
+  float s[STATE_LEN];
+  math::Vector<STATE_LEN> v;
+  hrt_abstime dt=SETPOINT_DEFAULT_LEN;
+  uint8_t param_mask=0;
+  for (auto it=p.begin(); it!=p.end(); it++) {
+    s[0]=(*it)(0);
+    s[1]=(*it)(1);
+    s[2]=(*it)(2);
+    v=math::Vector<STATE_LEN>(s);
+    add_setpoint(dt,param_mask,&v);
+  }
   return ELKA_SUCCESS;
+}
+
+// TODO update to include yaw and yaw rate
+void elka::BasicNavigator::print_setpoints() {
+  if (_setpoints.empty())
+    PX4_INFO("No setpoints");
+  else
+    PX4_INFO("Setpoints:");
+  uint16_t i=0;
+  for (auto it=_setpoints.begin();it!=_setpoints.end();it++) {
+    PX4_INFO("%d: %f %f %f,params: %d %d dt %" PRIu64 "",
+        i,it->pose(0),it->pose(1),it->pose(2),
+        it->land,it->hold,it->t[0]);
+    i++;
+  }
 }
 
 // TODO would be nice to parameterize copy to allow

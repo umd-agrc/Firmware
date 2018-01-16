@@ -96,9 +96,7 @@ genann *genann_init(int inputs, int hidden_layers, int hidden, int outputs) {
 
     /* Allocate extra size for weights, outputs, and deltas. */
     const int size = sizeof(genann) + sizeof(double) * (total_weights + total_neurons + (total_neurons - inputs));
-
     genann *ret = (genann *)malloc(size);
-    memset(ret,0,size);
     if (!ret) return 0;
 
     ret->inputs = inputs;
@@ -124,14 +122,11 @@ genann *genann_init(int inputs, int hidden_layers, int hidden, int outputs) {
 
 
 genann *genann_read(FILE *in) {
-    int inputs, hidden_layers, hidden, outputs, num_chars;
+    int inputs, hidden_layers, hidden, outputs;
     int rc;
-    char s[2048]; // Limits size of nn
 
     errno = 0;
-    fgets(s,2048,in);
-    rc=sscanf(s,"%d %d %d %d%n",&inputs, &hidden_layers, &hidden, &outputs,&num_chars);
-    //rc = fscanf(in, "%d %d %d %d", &inputs, &hidden_layers, &hidden, &outputs);
+    rc = fscanf(in, "%d %d %d %d", &inputs, &hidden_layers, &hidden, &outputs);
     if (rc < 4 || errno != 0) {
         perror("fscanf");
         return NULL;
@@ -142,10 +137,9 @@ genann *genann_read(FILE *in) {
     int i;
     for (i = 0; i < ann->total_weights; ++i) {
         errno = 0;
-        rc=sscanf(s+num_chars," %le",ann->weight+i);
-        //rc = fscanf(in, " %le", ann->weight + i);
+        rc = fscanf(in, " %le", ann->weight + i);
         if (rc < 1 || errno != 0) {
-            perror("sscanf");
+            perror("fscanf");
             genann_free(ann);
 
             return NULL;
@@ -159,7 +153,6 @@ genann *genann_read(FILE *in) {
 genann *genann_copy(genann const *ann) {
     const int size = sizeof(genann) + sizeof(double) * (ann->total_weights + ann->total_neurons + (ann->total_neurons - ann->inputs));
     genann *ret = (genann *)malloc(size);
-    memset(ret,0,size);
     if (!ret) return 0;
 
     memcpy(ret, ann, size);

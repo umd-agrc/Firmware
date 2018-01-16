@@ -21,7 +21,11 @@
 void usage();
 int spektrum_test_loop(int argc, char **argv);
 
-// Returns array length on success, PX4_ERROR on failure
+// Position estimate varies following sign convention as such:
+// x: Back/Forward (+/-)
+// y: Left/Right (+/-)
+// z: Down/Up (+/-)
+// Yaw left/Yaw right(-/+)
 int pack_position_estimate(elka_packet_s *snd,
                            pose_stamped_s *curr_err);
 int pack_spektrum_cmd(elka_packet_s *snd,
@@ -29,16 +33,18 @@ int pack_spektrum_cmd(elka_packet_s *snd,
                       input_rc_s *input_rc);
 int pack_kill_msg(elka_packet_s *snd,
                   input_rc_s *input_rc);
+// Spektrum rc varies as such:
+// Thrust: [0 1000] (down up)
+// Roll: [1000 2000] (right left)
+// Pitch: [1000 2000] (back forward)
+// Yaw: [1000 2000] (right left) TODO rearrange motors?
 int pack_input_rc_joysticks(elka_packet_s *snd,
                             input_rc_s *spektrum);
 int pack_test_msg(elka_packet_s *snd);
-/*
-int pack_input_rc(char *snd_arr,
-                  input_rc_s *spektrum);
-*/
 
 
 void serial_state_timeout_check(void *arg);
+void msg_set_serial_state(int msg_type, hrt_abstime t);
 void msg_set_serial_state(int msg_type, input_rc_s *input_rc);
 void msg_set_serial_state(int msg_type,
                           vehicle_local_position_s *pos,

@@ -2,11 +2,24 @@
 ##Send {X,Y,Z,VX,VY,VZ,Yaw,VYaw} to ELKA
 
 ##Add trajectory to BasicNavigator
+After landing, must send no signal to motors
+Setpoints should be function-based (order, coefficients)
+Setpoints should also contain `bits_to_set` after completion
 
 ##Complete simple patterns
 Takeoff, land, spin in circle, move about square
 
 ##Neural net gain update predictions
+Receive from elka in main loop
+Transmit to NN in main loop
+Receive from NN in main loop
+Fitness function in BasicController
+Transmit to elka in BasicController
+Initial error is difference from ELKA input
+
+Eventually train angular gains and linear motor inputs
+Angular inputs must be gains b/c inner loop update rate is much
+higher than outer loop position estimate rate
 
 ##Neural net position estimates
 Heuristic equation to determine when to trust vision pose estimates

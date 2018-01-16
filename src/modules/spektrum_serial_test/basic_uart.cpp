@@ -66,7 +66,7 @@ int spektrum_set_interface_attribs(int fd, int baud, int parity) {
 	if (tcsetattr (fd, TCSANOW, &tty) != 0)
 	{
 		PX4_ERR("error %d from tcsetattr", errno);
-    PX4_ERROR;
+    return PX4_ERROR;
 	}
 	return PX4_OK;
 }
@@ -145,10 +145,13 @@ int8_t elka::SnapdragonSerialMessenger::open() {
 
     // Save current serial port settings
     tcgetattr(_fd,&spektrum_oldtio);
+    usleep(10000);
 		// Set baud to 38400 bps, 8n1 (no parity)
 		spektrum_set_interface_attribs(_fd,B38400,0);
+    usleep(5000);
 		// Set no blocking
 		spektrum_set_blocking(_fd, 0);
+    usleep(5000);
   } else {
     //FIXME log error!
     PX4_INFO("Error opening serial port");
@@ -164,7 +167,7 @@ int8_t elka::SnapdragonSerialMessenger::close() {
   // restore old port settings
   tcsetattr(_fd,TCSANOW,&spektrum_oldtio);
 
-  usleep(2000);
+  usleep(5000);
   if (!::close(_fd)) {
     PX4_INFO("Successfully closed serial port number %d", _fd);
   } else {

@@ -1,7 +1,8 @@
 px4_add_module(
 	MODULE modules__spektrum_serial_test
 	MAIN spektrum_serial_test
-	STACK_MAIN 1600
+	STACK_MAIN 4200
+	STACK_MAX 3800
 	COMPILE_FLAGS
 	SRCS
 		serial_defines.h
@@ -19,8 +20,6 @@ px4_add_module(
 		basic_comm.cpp
 		basic_messenger.h
 		basic_messenger.cpp
-		#genann.h
-		#genann.cpp
 	DEPENDS
 		platforms__common
 	)

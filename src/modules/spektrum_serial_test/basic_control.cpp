@@ -9,6 +9,10 @@
 
 static bool thread_running_,thread_should_exit_;
 static int daemon_task_;
+struct hrt_call	print_state_call_;
+static int print_state_call_interval_;
+
+void print_state(void *arg);
 
 elka::BasicController *elka::BasicController::_inst=NULL;
 
@@ -35,7 +39,7 @@ int8_t elka::BasicController::start() {
       thread_name,
       SCHED_DEFAULT,
       SCHED_PRIORITY_DEFAULT,
-      800,
+      2400,
       run_controller,
       NULL);
 
@@ -77,18 +81,19 @@ int8_t elka::BasicController::exit() {
 
 void elka::BasicController::nn_ctl_init(const char *filename) {
   if (!nn_ctl_read(filename)) {
-    //_nn_ctl=genann_init(27,1,15,12);
+    if (!(_nn_ctl=genann_init(27,1,15,12)))
+      PX4_ERR("Failed to initialize ctl nn");
   }
 }
 
 void elka::BasicController::nn_ctl_delete() {
-  //genann_free(_nn_ctl);
+  genann_free(_nn_ctl);
 }
 
 bool elka::BasicController::nn_ctl_read(const char *filename) {
   if (file_exists(filename)) {
     FILE *f=fopen(filename,"r");
-    //_nn_ctl=genann_read(f);
+    _nn_ctl=genann_read(f);
     fclose(f);
     return true;
   } else return false;
@@ -97,13 +102,13 @@ bool elka::BasicController::nn_ctl_read(const char *filename) {
 void elka::BasicController::nn_ctl_write(const char *filename) {
   // Create/overwrite file w/`filename`
   FILE *f=fopen(filename,"w");
-  //genann_write(_nn_ctl,f);
+  genann_write(_nn_ctl,f);
   fclose(f);
 }
 
 int8_t elka::BasicController::parse_plan_file(const char *plan_file) {
   FILE *f=nullptr;
-	char plan_file_path[144]="\0", *plan_fp;
+	char plan_file_path[143]="\0", *plan_fp;
   strcat(plan_file_path,ELKA_DIR);
   strcat(plan_file_path,FLIGHT_PLAN_DIR);
   strcat(plan_file_path,plan_file);
@@ -144,23 +149,14 @@ int8_t elka::BasicController::parse_plan_file(const char *plan_file) {
         _plan.insert(new PlanElement(PLAN_ELEMENT_CHECK,
 					PLAN_ELEMENT_DEFAULT_LEN));
       } else if (!strcmp(phrase[k],"takeoff")) {
-        std::vector<math::Vector<POSITION_LEN>> v;
-				float p[POSITION_LEN]={0,0,HOVER_DEFAULT_HEIGHT,0,0};
-        v.push_back(p);
         _plan.insert(new PlanElement(PLAN_ELEMENT_TAKEOFF,
-					PLAN_ELEMENT_DEFAULT_LEN,v));
+					PLAN_ELEMENT_DEFAULT_LEN));
       } else if (!strcmp(phrase[k],"land")) {
-        std::vector<math::Vector<POSITION_LEN>> v;
-				float p[POSITION_LEN]={0,0,0,0,0};
-        v.push_back(p);
         _plan.insert(new PlanElement(PLAN_ELEMENT_LAND,
-					PLAN_ELEMENT_DEFAULT_LEN,v));
+					PLAN_ELEMENT_DEFAULT_LEN));
       } else if (!strcmp(phrase[k],"hover")) {
-        std::vector<math::Vector<POSITION_LEN>> v;
-				float p[POSITION_LEN]={0,0,HOVER_DEFAULT_HEIGHT,0,0};
-        v.push_back(p);
         _plan.insert(new PlanElement(PLAN_ELEMENT_HOVER,
-					PLAN_ELEMENT_DEFAULT_LEN,v));
+					PLAN_ELEMENT_DEFAULT_LEN));
       } else {
         PX4_WARN("Unrecognized plan word %s",phrase[k]);
       }
@@ -171,69 +167,70 @@ int8_t elka::BasicController::parse_plan_file(const char *plan_file) {
 }
 
 int8_t elka::BasicController::execute_plan() {
-  static PlanElement *e;
   static std::set<PlanElement *,plan_element_cmp>::iterator it;
   uint8_t ret=ELKA_SUCCESS;
   // Get next plan element
-  it=_plan.begin();
-  while (it!=_plan.end() && (*it)->_completed) {
-    e=*it;
-    _plan.erase(it);
-    delete e;
-    e=nullptr;
-    it++;
+  for (it=_plan.begin();it!=_plan.end() && (*it)->_completed;it++) {
+    erase_plan_element(it);
   }
 	if (it==_plan.end()) return ELKA_SUCCESS;
-#if defined(ELKA_DEBUG) && defined(DEBUG_CONTROLLER)
-	e->print_element();
-#endif
-  switch(e->_type) {
-  case PLAN_ELEMENT_CALIBRATE:
-    // Skip for now
-    if (!e->_begun) {
-      e->_begun=true;
-      e->_completed=true;
-      ret=ELKA_SUCCESS;
+
+  // Handle new plan element
+  if (!(*it)->_begun) {
+    // Erase all old setpoints only after new plan element 
+    // has begun
+    // To prevent likely crashes when lacking instruction.
+    _nav.reset_setpoints();
+    switch((*it)->_type) {
+    case PLAN_ELEMENT_NONE:
+      break;
+    case PLAN_ELEMENT_CALIBRATE:
+      break;
+    case PLAN_ELEMENT_CHECK:
+      break;
+    case PLAN_ELEMENT_TAKEOFF:
+      ret=_nav.takeoff(HOVER_DEFAULT_HEIGHT,true);
+      break;
+    case PLAN_ELEMENT_LAND:
+      ret=_nav.land(true);
+      break;
+    case PLAN_ELEMENT_HOVER:
+      ret=_nav.hover(true);
+      break;
+    default:
+      PX4_WARN("Invalid plan element type %d",(*it)->_type);
+      break;
     }
-    break;
-  case PLAN_ELEMENT_CHECK:
-    // Skip for now
-    if (!e->_begun) {
-      e->_begun=true;
-      e->_completed=true;
-      ret=ELKA_SUCCESS;
-    }
-    break;
-  case PLAN_ELEMENT_TAKEOFF:
-    if (!e->_begun) {
-      e->_begun=true;
-      ret=_nav.generate_setpoints(e->_positions);
-    }
-    break;
-  case PLAN_ELEMENT_LAND:
-    if (!e->_begun) {
-      e->_begun=true;
-      ret=_nav.generate_setpoints(e->_positions);
-    }
-    break;
-  case PLAN_ELEMENT_HOVER:
-    if (!e->_begun) {
-      e->_begun=true;
-      ret=_nav.generate_setpoints(e->_positions);
-    }
-    break;
+  }
+
+  (*it)->update();
+
+  if ((*it)->_timeout) {
+    erase_plan_element(it);
+    return ELKA_SUCCESS;
   }
   return ret;
 }
 
 int8_t elka::BasicController::parse_msg() {
   if (_msg.type==MSG_TYPE_GAINS) {
-    // Do some stuff with gains for nn
+    // If nn_ctl outputs gains,
+    // send gains as error + current position as input
+    // nn struct:
+    //  in: last position
+    //  out: controller gains
   } else if (_msg.type==MSG_TYPE_ERROR) {
 
   } else if (_msg.type==MSG_TYPE_TEST) {
     PX4_INFO("Test command:");
     print_elka_msg(_msg);
+  } else if (_msg.type==MSG_TYPE_MOTOR_INPUTS) {
+    // If nn_ctl outputs motor inputs,
+    // send motor inputs as error + current position as input
+    // nn struct:
+    //  in: last position
+    //  out: motor inputs 
+
   } else if (_msg.type==MSG_TYPE_NONE) {
     // Do nothing
   }
@@ -245,28 +242,37 @@ int8_t elka::BasicController::add_messenger(int msgr) {
     return ELKA_SUCCESS;
 }
 
+void elka::BasicController::print_state() {
+  auto it=_plan.begin();
+  if (it!=_plan.end())
+    PX4_INFO("Current plan element type: %d",(*it)->_type);
+#if defined(ELKA_DEBUG) && defined(DEBUG_NAVIGATOR)
+  _nav.print_setpoints();
+#endif
+}
+
 int run_controller(int argc, char **argv) {
   elka::BasicController *ctl=elka::BasicController::instance();
   thread_running_=true;
   thread_should_exit_=false;
 
-  // Set up neural network
-  strcpy(ctl->_nn_ctl_filename,"/dev/fs/.elka/nn/ctl.nn");
-  ctl->nn_ctl_init(ctl->_nn_ctl_filename);
+  print_state_call_interval_=450000; // us
+  hrt_call_every(&print_state_call_, 0,
+           (print_state_call_interval_),
+           (hrt_callout)&print_state,
+           (void *)ctl);
 
 	while(!thread_should_exit_) {
-		//ctl->execute_plan();
+		ctl->execute_plan();
 		ctl->set_msg();
-		//ctl->parse_msg();
-		//usleep(10000);
+		ctl->parse_msg();
+		usleep(25000);
 	}
-	return 0;
-  while(!thread_should_exit_) {
-    ctl->execute_plan();
-    ctl->set_msg();
-    ctl->parse_msg();
-    usleep(10000);
-  }
   thread_running_=false;
   return ELKA_SUCCESS;
+}
+
+void print_state(void *arg) {
+  elka::BasicController *ctl=(elka::BasicController *)arg;
+  ctl->print_state();
 }

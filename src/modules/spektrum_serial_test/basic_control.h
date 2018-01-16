@@ -12,7 +12,7 @@
 #include "serial_defines.h"
 #include "basic_navigator.h"
 #include "basic_comm.h"
-//#include "genann.h"
+#include "genann.h"
 
 #define GAINS_LEN 12
 
@@ -68,7 +68,7 @@ public:
   // Nn outputs(12,gain updates):
   // [dkpx,dkpy,dkpz,dkdx,dkdy,dkdz,dkpr,dkpp,dkpyaw,dkdr,dkdp,dkdyaw]
   char _nn_ctl_filename[128];
-  //genann *_nn_ctl;
+  genann *_nn_ctl;
   /* Initialize nn either from file or random
    */
   void nn_ctl_init(const char *filename);
@@ -82,6 +82,16 @@ public:
 
   BasicNavigator *get_navigator() {return &_nav;};
   int8_t parse_plan_file(const char *plan_file);
+  //TODO Clear setpoints from plan_element
+  //     For now just reset setpoints
+  void erase_plan_element(
+      std::set<PlanElement *,plan_element_cmp>::iterator it) {
+    PlanElement *e;
+    e=*it;
+    _plan.erase(it);
+    delete e;
+    e=nullptr;
+  }
   int8_t execute_plan();
 	void print_plan() {
 		char s[1024];
@@ -107,4 +117,5 @@ public:
   int8_t add_messenger(int msgr);
   int8_t start();
   int8_t exit();
+  void print_state();
 };

@@ -11,6 +11,8 @@
 
 #include <uORB/uORB.h>
 #include <uORB/topics/input_rc.h>
+#include <uORB/topics/nn_in.h>
+#include <uORB/topics/nn_out.h>
 
 #include "spektrum_serial_test.h"
 
@@ -20,7 +22,7 @@ static int daemon_task;
 static volatile bool thread_should_exit;
 static volatile bool thread_running;
 int _serial_state;
-hrt_abstime _prev_spektrum_update, _old_msg_duration;
+hrt_abstime _prev_state_update, _old_msg_duration;
 struct hrt_call	_serial_state_call;
 static int _serial_state_call_interval;
 gains_s _gains[3];
@@ -30,7 +32,7 @@ void usage() {
 }
 
 int spektrum_serial_test_main(int argc, char *argv[]) {
-	if (argc < 2) {
+	if (argc < 3) {
 		PX4_WARN("Missing action.");
     usage();
     return PX4_OK;
@@ -46,7 +48,7 @@ int spektrum_serial_test_main(int argc, char *argv[]) {
         thread_name,
         SCHED_DEFAULT,
         SCHED_PRIORITY_DEFAULT,
-        800,
+        1000,
         spektrum_test_loop,
         &argv[2]);
 
@@ -125,17 +127,22 @@ int spektrum_test_loop(int argc, char *argv[]) {
   // Define poll_return for defined file descriptors
   int poll_ret;
 
-  input_rc_s input_rc;
+  input_rc_s input_rc, input_rc_trim;
   vehicle_local_position_s vision_pos;
   vehicle_attitude_s vision_att;
   elka_msg_s elka_out;
   elka_packet_s elka_pkt;
+  nn_in_s nn_ctl_in;
+  nn_out_s nn_ctl_out;
 
   memset(&input_rc,0,sizeof(input_rc));
+  memset(&input_rc_trim,0,sizeof(input_rc_trim));
   memset(&vision_pos,0,sizeof(vision_pos));
   memset(&vision_att,0,sizeof(vision_att));
   memset(&elka_out,0,sizeof(elka_out));
   memset(&elka_pkt,0,sizeof(elka_pkt));
+  memset(&nn_ctl_in,0,sizeof(nn_ctl_in));
+  memset(&nn_ctl_out,0,sizeof(nn_ctl_out));
 
   // Subscribe to elka msg, elka msg ack, and input_rc (TODO only if necessary)
   // Vision position omes from MAVLink SLAM pose estimate
@@ -143,24 +150,24 @@ int spektrum_test_loop(int argc, char *argv[]) {
   int input_rc_sub_fd = orb_subscribe(ORB_ID(input_rc));
   int vision_pos_sub_fd = orb_subscribe(ORB_ID(vehicle_vision_position));
   int vision_att_sub_fd = orb_subscribe(ORB_ID(vehicle_vision_attitude));
+  int nn_ctl_out_sub_fd = orb_subscribe(ORB_ID(nn_out));
 
   // Set update rate to 100Hz
   orb_set_interval(input_rc_sub_fd, 10);
   orb_set_interval(vision_pos_sub_fd, 10);
   orb_set_interval(vision_att_sub_fd, 10);
 
-  uint8_t len_fds;
   px4_pollfd_struct_t fds[] = {
     {.fd = input_rc_sub_fd, .events = POLLIN},
     {.fd = vision_pos_sub_fd, .events = POLLIN},
     {.fd = vision_att_sub_fd, .events = POLLIN},
+    {.fd = nn_ctl_out_sub_fd, .events = POLLIN},
   };
-  len_fds=3;
 
 
   // Set old message duration to 1/10 s
   set_old_msg_duration(100000);
-  _prev_spektrum_update = hrt_absolute_time();
+  _prev_state_update = hrt_absolute_time();
   // Serial state call interval in hz
   _serial_state_call_interval = 1000;
   hrt_call_every(&_serial_state_call, 0,
@@ -169,8 +176,6 @@ int spektrum_test_loop(int argc, char *argv[]) {
            nullptr);
 
   uint8_t msg_type;
-
-  uint16_t spektrum_thrust = 0;
 
   int error_counter = 0;
 
@@ -193,7 +198,7 @@ int spektrum_test_loop(int argc, char *argv[]) {
     } else {
 
 
-#if defined(ELKA_DEBUG) && defined(DEBUG_SERIAL_WRITE)
+#if defined(ELKA_DEBUG) && defined(DEBUG_SERIAL_TX)
       if ((pack_test_msg(
               &elka_pkt))
            != PX4_ERROR) {
@@ -210,24 +215,54 @@ int spektrum_test_loop(int argc, char *argv[]) {
         input_rc.values[SPEKTRUM_THRUST_CHANNEL] =
           input_rc.values[SPEKTRUM_THRUST_CHANNEL] < RAW_THRUST_BASELINE ?
           0 : input_rc.values[SPEKTRUM_THRUST_CHANNEL]-RAW_THRUST_BASELINE;
-        spektrum_thrust = input_rc.values[SPEKTRUM_THRUST_CHANNEL];
         msg_set_serial_state(MSG_TYPE_SPEKTRUM, &input_rc);
 
-#if defined(ELKA_DEBUG) && defined(DEBUG_SPEKTRUM)
-        PX4_INFO("channel values\n0:\t%" PRIu16 "\n1:\t%" PRIu16 "\n2:\t"
-"%" PRIu16 "\n3:\t%" PRIu16 "\n4:\t%" PRIu16 "\n5:\t%" PRIu16 "\n6:\t"
-"%" PRIu16 "\n7:\t%" PRIu16 "\n8:\t%" PRIu16 "\n9:\t%" PRIu16 "\n10:\t"
-"%" PRIu16 "",
-            input_rc.values[0],input_rc.values[1],input_rc.values[2],
-            input_rc.values[3],input_rc.values[4],input_rc.values[5],
-            input_rc.values[6],input_rc.values[7],input_rc.values[8],
-            input_rc.values[9],input_rc.values[10],input_rc.values[11]);
-#endif
+      }
+
+      if (fds[1].revents & POLLIN) { // vision_pos 
+        orb_copy(ORB_ID(vehicle_vision_position),
+                 vision_pos_sub_fd,
+                 &vision_pos);
+        msg_set_serial_state(MSG_TYPE_VISION_POS,
+                             &vision_pos,
+                             &vision_att);
+      }
+      if (fds[2].revents & POLLIN) { // vision_att 
+        orb_copy(ORB_ID(vehicle_vision_attitude),
+                 vision_att_sub_fd,
+                 &vision_att);
+        msg_set_serial_state(MSG_TYPE_VISION_POS,
+                             &vision_pos,
+                             &vision_att);
+      }
+
+      if (fds[3].revents & POLLIN) {
+        orb_copy(ORB_ID(nn_out),
+            nn_ctl_out_sub_fd,
+            &nn_ctl_out);
+        //TODO pack and send nn_ctl_out
+      }
+
+      nav->update_pose(&vision_pos,&vision_att);
+
+      // If manual interrupt, reset setpoints 
+      // If interrupting w/kill switch, set
+      // _wait flag in navigator to shut off signal to motors
+      // If interrupting w/manual flight, set
+      // _from_manual flag in navigator to avoid crashing
+      // by performing action like hover
+      if (_serial_state == SERIAL_STATE_KILL ||
+          _serial_state == SERIAL_STATE_SPEKTRUM) {
+        nav->reset_setpoints();
 
         if (_serial_state == SERIAL_STATE_KILL) {
-          msg_type = MSG_TYPE_KILL;
-        } else if (_serial_state == SERIAL_STATE_SPEKTRUM) {
-          msg_type = MSG_TYPE_SPEKTRUM;
+          nav->_kill=true;
+          memcpy(&input_rc_trim,&input_rc,sizeof(input_rc));
+          msg_type=MSG_TYPE_KILL;
+        } else {
+          nav->_from_manual=true;
+          nav->_landed=false;
+          msg_type=MSG_TYPE_SPEKTRUM;
         }
 
         if (check_state(msg_type) &&
@@ -237,41 +272,46 @@ int spektrum_test_loop(int argc, char *argv[]) {
                 &input_rc))
              != PX4_ERROR) {
           msg_mgr->send(elka_msgr_d,&elka_pkt);
-          // Must send new setpoint after successful write to ELKA
-          // from RC ctrlr
-          nav->reset_setpoints();
           usleep(20000);
+        }
+      } else if (_serial_state == SERIAL_STATE_POSE) {
+        // Case should not be flying
+        if (nav->_landed || nav->_wait || nav->_kill) {
+          msg_type=MSG_TYPE_KILL;
+          if (check_state(msg_type) &&
+              (pack_spektrum_cmd(
+                  &elka_pkt,
+                  msg_type,
+                  &input_rc_trim))
+               != PX4_ERROR) {
+            msg_mgr->send(elka_msgr_d,&elka_pkt);
+            usleep(20000);
+          }
+          // Reset kill flag
+          nav->_kill=false;
+        } else { 
+          // Case resume after manual interrupt
+          if (nav->_from_manual) {
+            //TODO
+            msg_type = MSG_TYPE_SETPOINT;
+            nav->hover(false); // Provide instruction
+            nav->land(true);
+            // Reset from_manual flag
+            nav->_from_manual=false;
+          } else // Case instruction
+            msg_type = MSG_TYPE_VISION_POS;
+
+            if (check_state(msg_type) &&
+              (pack_position_estimate(&elka_pkt,
+                                      nav->get_err())
+               != PX4_ERROR)) {
+            msg_mgr->send(elka_msgr_d,&elka_pkt);
+            usleep(20000);
           }
         }
-
-      if (fds[1].revents & POLLIN) { // vision_pos 
-        orb_copy(ORB_ID(vehicle_vision_position),
-                 vision_pos_sub_fd,
-                 &vision_pos);
-      }
-      if (fds[2].revents & POLLIN) { // vision_att 
-        orb_copy(ORB_ID(vehicle_vision_attitude),
-                 vision_att_sub_fd,
-                 &vision_att);
-      }
-
-      nav->update_pose(&vision_pos,&vision_att);
-
-      if (nav->_from_manual) {
-        msg_type = MSG_TYPE_SETPOINT;
-				nav->hover();
-      } else
-        msg_type = MSG_TYPE_VISION_POS;
-
-      msg_set_serial_state(msg_type,
-                           &vision_pos,
-                           &vision_att);
-      if (check_state(msg_type) &&
-          (pack_position_estimate(&elka_pkt,
-                                  nav->get_err())
-           != PX4_ERROR)) {
-        msg_mgr->send(elka_msgr_d,&elka_pkt);
-        usleep(20000);
+      } else if (_serial_state==SERIAL_STATE_NONE) {
+        // Wait state
+        // Do nothing
       }
     }
 
@@ -301,16 +341,16 @@ int pack_position_estimate(elka_packet_s *snd,
   body_pose_e=curr_err->get_body_pose();
 
   // Sending body frame error in mm/rad
-  e[0] = (float)(body_pose_e(1)*100);
-  e[1] = (float)(-body_pose_e(0)*100);
-  e[2] = (float)(body_pose_e(2)*100);
-  e[3] = (float)(body_pose_e(4)*100);
-  e[4] = (float)(-body_pose_e(3)*100);
-  e[5] = (float)(body_pose_e(5)*100);
+  e[0] = (float)(body_pose_e(1)*1000);
+  e[1] = (float)(-body_pose_e(0)*1000);
+  e[2] = (float)(body_pose_e(2)*1000);
+  e[3] = (float)(body_pose_e(4)*1000);
+  e[4] = (float)(-body_pose_e(3)*1000);
+  e[5] = (float)(body_pose_e(5)*1000);
   e[6] = (float)body_pose_e(8);
   e[7] = (float)body_pose_e(11);
 
-#if defined(ELKA_DEBUG) && defined(DEBUG_SERIAL)
+#if defined(ELKA_DEBUG) && defined(DEBUG_POSE)
   PX4_INFO("xe: %f ye: %f ze: %f\n\
 vxe: %f vye: %f vze: %f\n\
 yawe: %f vyawe: %f",
@@ -329,6 +369,17 @@ yawe: %f vyawe: %f",
 int pack_spektrum_cmd(elka_packet_s *snd,
                       uint8_t msg_type,
                       input_rc_s *input_rc) {
+#if defined(ELKA_DEBUG) && defined(DEBUG_SPEKTRUM)
+        PX4_INFO("channel values\n0:\t%" PRIu16 "\n1:\t%" PRIu16 "\n2:\t"
+"%" PRIu16 "\n3:\t%" PRIu16 "\n4:\t%" PRIu16 "\n5:\t%" PRIu16 "\n6:\t"
+"%" PRIu16 "\n7:\t%" PRIu16 "\n8:\t%" PRIu16 "\n9:\t%" PRIu16 "\n10:\t"
+"%" PRIu16 "",
+            input_rc->values[0],input_rc->values[1],input_rc->values[2],
+            input_rc->values[3],input_rc->values[4],input_rc->values[5],
+            input_rc->values[6],input_rc->values[7],input_rc->values[8],
+            input_rc->values[9],input_rc->values[10],input_rc->values[11]);
+#endif
+
   if (msg_type == MSG_TYPE_KILL)
     return pack_kill_msg(snd, input_rc);
   else if (msg_type == MSG_TYPE_SPEKTRUM)
@@ -340,10 +391,10 @@ int pack_spektrum_cmd(elka_packet_s *snd,
 int pack_kill_msg(elka_packet_s *snd, input_rc_s *input_rc) {
   uint8_t data_len=8,data[8];
 
-  serialize(&(snd->data[0]),&(input_rc->values[0]),2);
-  serialize(&(snd->data[2]),&(input_rc->values[1]),2);
-  serialize(&(snd->data[4]),&(input_rc->values[2]),2);
-  serialize(&(snd->data[6]),&(input_rc->values[3]),2);
+  serialize(&(data[0]),&(input_rc->values[0]),2);
+  serialize(&(data[2]),&(input_rc->values[1]),2);
+  serialize(&(data[4]),&(input_rc->values[2]),2);
+  serialize(&(data[6]),&(input_rc->values[3]),2);
   return append_pkt(
           snd,
           MSG_TYPE_KILL,
@@ -354,13 +405,13 @@ int pack_kill_msg(elka_packet_s *snd, input_rc_s *input_rc) {
 int pack_input_rc_joysticks(elka_packet_s *snd, input_rc_s *input_rc) {
   uint8_t data_len=8,data[8];
 
-  serialize(&(snd->data[0]),&(input_rc->values[0]),2);
-  serialize(&(snd->data[2]),&(input_rc->values[1]),2);
-  serialize(&(snd->data[4]),&(input_rc->values[2]),2);
-  serialize(&(snd->data[6]),&(input_rc->values[3]),2);
+  serialize(&(data[0]),&(input_rc->values[0]),2);
+  serialize(&(data[2]),&(input_rc->values[1]),2);
+  serialize(&(data[4]),&(input_rc->values[2]),2);
+  serialize(&(data[6]),&(input_rc->values[3]),2);
   return append_pkt(
           snd,
-          MSG_TYPE_KILL,
+          MSG_TYPE_SPEKTRUM,
           data_len,
           data);
 }
@@ -376,11 +427,28 @@ int pack_test_msg(elka_packet_s *snd) {
 
 void serial_state_timeout_check(void *arg) {
   static hrt_abstime timeout_duration;
-  timeout_duration = hrt_abstime(100000);
-  if (hrt_absolute_time() - _prev_spektrum_update > timeout_duration) {
+  timeout_duration = hrt_abstime(100000); // 0.1s
+  if (hrt_absolute_time() - _prev_state_update > timeout_duration) {
     _serial_state = SERIAL_STATE_NONE;
   }
+}
 
+void msg_set_serial_state(int msg_type, hrt_abstime t) {
+  if (!old_msg(t)) {
+    if (msg_type==MSG_TYPE_KILL) {
+      _serial_state = SERIAL_STATE_KILL;
+    } else if (_serial_state!=SERIAL_STATE_KILL) {
+      if (msg_type==MSG_TYPE_SPEKTRUM)
+          _serial_state = SERIAL_STATE_SPEKTRUM;
+      else if (_serial_state!=SERIAL_STATE_SPEKTRUM) {
+        if (msg_type==MSG_TYPE_VISION_POS||
+            msg_type==MSG_TYPE_LOCAL_POS||
+            msg_type==MSG_TYPE_SETPOINT)
+          _serial_state=SERIAL_STATE_POSE;
+      }
+    }
+  }
+  _prev_state_update=hrt_absolute_time();
 }
 
 void msg_set_serial_state(int msg_type, input_rc_s *input_rc) {
@@ -394,7 +462,7 @@ void msg_set_serial_state(int msg_type, input_rc_s *input_rc) {
       // in the event that controller inputs continue streaming
       _serial_state = SERIAL_STATE_NONE;
     }
-    _prev_spektrum_update = hrt_absolute_time();
+    _prev_state_update = hrt_absolute_time();
   }
 }
 
@@ -404,33 +472,32 @@ void msg_set_serial_state(int msg_type,
   if (!(old_msg(pos->timestamp) || old_msg(att->timestamp))) {
     if (_serial_state != SERIAL_STATE_KILL &&
         _serial_state != SERIAL_STATE_SPEKTRUM) {
-      if (msg_type == MSG_TYPE_LOCAL_POS) {
-        _serial_state = SERIAL_STATE_LOCAL_POS;
-      } else if (msg_type == MSG_TYPE_VISION_POS &&
-                 _serial_state != SERIAL_STATE_LOCAL_POS) {
-        _serial_state = SERIAL_STATE_VISION_POS;
-      } else if (msg_type == MSG_TYPE_SETPOINT) {
-        _serial_state = SERIAL_STATE_SETPOINT;
+      if (msg_type == MSG_TYPE_VISION_POS ||
+          msg_type == MSG_TYPE_LOCAL_POS ||
+          msg_type == MSG_TYPE_SETPOINT) {
+        _serial_state = SERIAL_STATE_POSE;
       } else {
         _serial_state = SERIAL_STATE_NONE;
       }
     }
-    _prev_spektrum_update = hrt_absolute_time();
+    _prev_state_update = hrt_absolute_time();
   }
 }
 
 inline bool check_state(int msg_type) {
   switch(msg_type) {
     case MSG_TYPE_KILL:
-      return _serial_state ==SERIAL_STATE_KILL;
+      return _serial_state == SERIAL_STATE_KILL ||
+             _serial_state == SERIAL_STATE_POSE ||
+             _serial_state == SERIAL_STATE_NONE;
     case MSG_TYPE_SPEKTRUM:
       return _serial_state == SERIAL_STATE_SPEKTRUM;
     case MSG_TYPE_LOCAL_POS: 
-      return _serial_state == SERIAL_STATE_LOCAL_POS;
+      return _serial_state == SERIAL_STATE_POSE;
     case MSG_TYPE_VISION_POS: 
-      return _serial_state == SERIAL_STATE_VISION_POS;
+      return _serial_state == SERIAL_STATE_POSE;
     case MSG_TYPE_SETPOINT:
-      return _serial_state == SERIAL_STATE_SETPOINT;
+      return _serial_state == SERIAL_STATE_POSE;
     default:
       return false;
   }
