@@ -222,7 +222,6 @@ uint8_t elka::BasicNavigator::takeoff(float z,bool hold) {
   uint8_t param_mask=0;
 	t=TAKEOFF_SETPOINT_DEFAULT_LEN;
 	tmp=get_pose()->pose;
-  tmp(3)=0;
 	tmp(4)=0;
 	tmp(5)=0;
 	tmp(10)=0;
@@ -230,6 +229,7 @@ uint8_t elka::BasicNavigator::takeoff(float z,bool hold) {
 	tmp(12)=0;
   float dz=0;
   tmp(2)=dz;
+  tmp(3)=VERTICAL_DEFAULT_SPEED*((z-dz)/z);
   eps=fabs(z-dz);
   if (eps<POSITION_EPSILON)
     if (hold) param_mask|=SETPOINT_PARAM_HOLD;
@@ -238,12 +238,15 @@ uint8_t elka::BasicNavigator::takeoff(float z,bool hold) {
     dz=dz+(z-dz)/2;
     eps=fabs(z-dz);
     tmp(2)=dz;
+    tmp(3)=VERTICAL_DEFAULT_SPEED*((z-dz)/z);
+    PX4_INFO("HERE %f",VERTICAL_DEFAULT_SPEED*((z-dz)/z));
     if (eps<POSITION_EPSILON)
       if (hold) param_mask|=SETPOINT_PARAM_HOLD;
     add_setpoint(t,param_mask,&tmp);
   }
   return ELKA_SUCCESS;
 }
+
 uint8_t elka::BasicNavigator::hover(bool hold) {
   math::Vector<STATE_LEN> tmp;
 	hrt_abstime t;
@@ -268,13 +271,14 @@ uint8_t elka::BasicNavigator::land(bool hold) {
   uint8_t param_mask=0;
 	t=LANDING_SETPOINT_DEFAULT_LEN;
 	tmp=get_pose()->pose;
-  tmp(3)=0;
+  tmp(3)=-VERTICAL_DEFAULT_SPEED;
 	tmp(4)=0;
 	tmp(5)=0;
 	tmp(10)=0;
 	tmp(11)=0;
 	tmp(12)=0;
-  float z=tmp(2);
+  float z=tmp(2),init_z=tmp(2);
+  tmp(3)=-VERTICAL_DEFAULT_SPEED*(z/init_z);
   // Check if landed. Can land lower than LAND_DEFAULT_HEIGHT,
   // but not higher
   if (z-LAND_DEFAULT_HEIGHT<LANDING_HEIGHT_EPSILON) {
@@ -284,6 +288,7 @@ uint8_t elka::BasicNavigator::land(bool hold) {
   while (z-LAND_DEFAULT_HEIGHT>LANDING_HEIGHT_EPSILON) {
     z-=(z-LAND_DEFAULT_HEIGHT)/1.5;
     tmp(2)=z;
+    tmp(3)=-VERTICAL_DEFAULT_SPEED*(z/init_z);
     if (z-LAND_DEFAULT_HEIGHT<LANDING_HEIGHT_EPSILON) {
       if (hold) param_mask|=SETPOINT_PARAM_LAND|SETPOINT_PARAM_HOLD;
     }

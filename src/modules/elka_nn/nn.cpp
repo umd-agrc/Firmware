@@ -130,10 +130,6 @@ int nn_loop(int argc, char **argv) {
   int poll_ret;
 
   int nn_ctl_in_sub_fd = orb_subscribe(ORB_ID(nn_in));
-  int vision_pos_sub_fd=
-    orb_subscribe(ORB_ID(vehicle_vision_position));
-  int vision_att_sub_fd=
-    orb_subscribe(ORB_ID(vehicle_vision_attitude));
 
   // Set update rate to 100Hz
   orb_set_interval(nn_ctl_in_sub_fd, 10);
@@ -164,7 +160,11 @@ int nn_loop(int argc, char **argv) {
       if (fds[0].revents & POLLIN) { // input_rc
         orb_copy(ORB_ID(nn_in), nn_ctl_in_sub_fd, &nn_ctl_in);
         if (nn_ctl_in.type == nn_in_s::NN_CTL_TRAIN) {
-          genann_train(nn_ctl_,nn_ctl_in.data,.01);
+          //genann_train(
+          //  nn_ctl_,
+          //  (const double *)nn_ctl_in.data,
+          //  (const double *)nn_ctl_in.data,
+          //  .01);
         } else if (nn_ctl_in.type == nn_in_s::NN_CTL_PREDICT) {
         }
       }

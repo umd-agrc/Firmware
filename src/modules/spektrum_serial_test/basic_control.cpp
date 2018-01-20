@@ -79,33 +79,6 @@ int8_t elka::BasicController::exit() {
   return ELKA_SUCCESS;
 }
 
-void elka::BasicController::nn_ctl_init(const char *filename) {
-  if (!nn_ctl_read(filename)) {
-    if (!(_nn_ctl=genann_init(27,1,15,12)))
-      PX4_ERR("Failed to initialize ctl nn");
-  }
-}
-
-void elka::BasicController::nn_ctl_delete() {
-  genann_free(_nn_ctl);
-}
-
-bool elka::BasicController::nn_ctl_read(const char *filename) {
-  if (file_exists(filename)) {
-    FILE *f=fopen(filename,"r");
-    _nn_ctl=genann_read(f);
-    fclose(f);
-    return true;
-  } else return false;
-}
-
-void elka::BasicController::nn_ctl_write(const char *filename) {
-  // Create/overwrite file w/`filename`
-  FILE *f=fopen(filename,"w");
-  genann_write(_nn_ctl,f);
-  fclose(f);
-}
-
 int8_t elka::BasicController::parse_plan_file(const char *plan_file) {
   FILE *f=nullptr;
 	char plan_file_path[143]="\0", *plan_fp;
@@ -213,6 +186,9 @@ int8_t elka::BasicController::execute_plan() {
 }
 
 int8_t elka::BasicController::parse_msg() {
+  if (_msg.type)
+    PX4_INFO("type: %d",_msg.type);
+
   if (_msg.type==MSG_TYPE_GAINS) {
     // If nn_ctl outputs gains,
     // send gains as error + current position as input

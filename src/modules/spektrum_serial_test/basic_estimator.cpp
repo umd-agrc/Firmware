@@ -109,6 +109,7 @@ void elka::BasicEstimator::low_pass_filt(
         t=_curr_pose.t[i-3];
         s_samp=(_curr_pose.pose(i-3)-_prev_pose.pose(i-3))/dt;
       } else if (i==10 || i==11 || i==12) {
+        // Get current and previous euler angles 
         math::Vector<3> v_curr=_curr_pose.get_body_pose(SECT_ANG),
                         v_prev=_prev_pose.get_body_pose(SECT_ANG);
 

@@ -197,17 +197,6 @@ int spektrum_test_loop(int argc, char *argv[]) {
       error_counter++;
     } else {
 
-
-#if defined(ELKA_DEBUG) && defined(DEBUG_SERIAL_TX)
-      if ((pack_test_msg(
-              &elka_pkt))
-           != PX4_ERROR) {
-        //pack_test_msg(&elka_pkt);
-        msg_mgr->send(elka_msgr_d,&elka_pkt);
-        usleep(10000);
-      }
-#endif
-
       if (fds[0].revents & POLLIN) { // input_rc
         orb_copy(ORB_ID(input_rc), input_rc_sub_fd, &input_rc);
 
@@ -314,6 +303,15 @@ int spektrum_test_loop(int argc, char *argv[]) {
         // Do nothing
       }
     }
+
+#if defined(ELKA_DEBUG) && defined(DEBUG_SERIAL_TX)
+    if ((pack_test_msg(
+            &elka_pkt))
+         != PX4_ERROR) {
+      msg_mgr->send(elka_msgr_d,&elka_pkt);
+      usleep(10000);
+    }
+#endif
 
     // Parse packets received and reset packet to send
     //TODO this should be threaded

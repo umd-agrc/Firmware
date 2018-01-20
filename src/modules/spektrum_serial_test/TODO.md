@@ -1,5 +1,6 @@
 #TODO
 ##Send {X,Y,Z,VX,VY,VZ,Yaw,VYaw} to ELKA
+Check that sign of zerror agrees with sign of vzerror
 
 ##Add trajectory to BasicNavigator
 After landing, must send no signal to motors

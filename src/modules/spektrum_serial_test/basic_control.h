@@ -60,25 +60,6 @@ private:
   elka_msg_s _msg;
 public:
   static BasicController *instance();
-  // Neural network inputs (27):
-  // [xe,ye,ze,vxe,vye,vze,re,pe,yawe,dre,dpe,dyawe,
-  //  kpx,kpy,kpz,kdx,kdy,kdz,kpr,kpp,kpyaw,kdr,kdp,kdyaw,
-  //  Ixx,Iyy,Izz,prop_specs?]
-  // 1 hidden layer (15 nodes)
-  // Nn outputs(12,gain updates):
-  // [dkpx,dkpy,dkpz,dkdx,dkdy,dkdz,dkpr,dkpp,dkpyaw,dkdr,dkdp,dkdyaw]
-  char _nn_ctl_filename[128];
-  genann *_nn_ctl;
-  /* Initialize nn either from file or random
-   */
-  void nn_ctl_init(const char *filename);
-  void nn_ctl_delete();
-  /* Load nn_ctl from file
-   * @return true if loaded, else false
-   */
-  bool nn_ctl_read(const char *filename);
-  /* Write nn_ctl to file*/
-  void nn_ctl_write(const char *filename);
 
   BasicNavigator *get_navigator() {return &_nav;};
   int8_t parse_plan_file(const char *plan_file);

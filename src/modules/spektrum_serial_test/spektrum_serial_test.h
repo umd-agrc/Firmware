@@ -35,9 +35,9 @@ int pack_kill_msg(elka_packet_s *snd,
                   input_rc_s *input_rc);
 // Spektrum rc varies as such:
 // Thrust: [0 1000] (down up)
-// Roll: [1000 2000] (right left)
+// Roll: [2000 1000] (left right)
 // Pitch: [1000 2000] (back forward)
-// Yaw: [1000 2000] (right left) TODO rearrange motors?
+// Yaw: [2000 1000] (left right) TODO rearrange motors?
 int pack_input_rc_joysticks(elka_packet_s *snd,
                             input_rc_s *spektrum);
 int pack_test_msg(elka_packet_s *snd);

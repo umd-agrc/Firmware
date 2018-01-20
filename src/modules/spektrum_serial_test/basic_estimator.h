@@ -17,6 +17,9 @@ namespace elka {
   class BasicEstimator;
 }
 
+// Using coordinate system BACKWARD-LEFT-DOWN as positive
+//  YAW RIGHT as positive
+
 #define STATE_LEN 13
 #define STATE_LEN_EKF 15
 #define STATE_LEN_EKF_ODOM 9 
