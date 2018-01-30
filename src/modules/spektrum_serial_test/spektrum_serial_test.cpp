@@ -130,6 +130,7 @@ int spektrum_test_loop(int argc, char *argv[]) {
   input_rc_s input_rc, input_rc_trim;
   vehicle_local_position_s vision_pos;
   vehicle_attitude_s vision_att;
+  vision_velocity_s vision_vel;
   elka_msg_s elka_out;
   elka_packet_s elka_pkt;
   nn_in_s nn_ctl_in;
@@ -139,6 +140,7 @@ int spektrum_test_loop(int argc, char *argv[]) {
   memset(&input_rc_trim,0,sizeof(input_rc_trim));
   memset(&vision_pos,0,sizeof(vision_pos));
   memset(&vision_att,0,sizeof(vision_att));
+  memset(&vision_vel,0,sizeof(vision_vel));
   memset(&elka_out,0,sizeof(elka_out));
   memset(&elka_pkt,0,sizeof(elka_pkt));
   memset(&nn_ctl_in,0,sizeof(nn_ctl_in));
@@ -150,20 +152,22 @@ int spektrum_test_loop(int argc, char *argv[]) {
   int input_rc_sub_fd = orb_subscribe(ORB_ID(input_rc));
   int vision_pos_sub_fd = orb_subscribe(ORB_ID(vehicle_vision_position));
   int vision_att_sub_fd = orb_subscribe(ORB_ID(vehicle_vision_attitude));
+  int vision_vel_sub_fd = orb_subscribe(ORB_ID(vision_velocity));
   int nn_ctl_out_sub_fd = orb_subscribe(ORB_ID(nn_out));
 
   // Set update rate to 100Hz
   orb_set_interval(input_rc_sub_fd, 10);
   orb_set_interval(vision_pos_sub_fd, 10);
   orb_set_interval(vision_att_sub_fd, 10);
+  orb_set_interval(vision_vel_sub_fd, 10);
 
   px4_pollfd_struct_t fds[] = {
     {.fd = input_rc_sub_fd, .events = POLLIN},
     {.fd = vision_pos_sub_fd, .events = POLLIN},
     {.fd = vision_att_sub_fd, .events = POLLIN},
+    {.fd = vision_vel_sub_fd, .events = POLLIN},
     {.fd = nn_ctl_out_sub_fd, .events = POLLIN},
   };
-
 
   // Set old message duration to 1/10 s
   set_old_msg_duration(100000);
@@ -225,14 +229,28 @@ int spektrum_test_loop(int argc, char *argv[]) {
                              &vision_att);
       }
 
-      if (fds[3].revents & POLLIN) {
+      if (fds[3].revents & POLLIN) { // vision_vel
+        orb_copy(ORB_ID(vision_velocity),
+                 vision_vel_sub_fd,
+                 &vision_vel);
+        msg_set_serial_state(MSG_TYPE_VISION_POS,
+                             &vision_vel);
+#if defined(ELKA_DEBUG) && defined(DEBUG_VISION_VELOCITY)
+        PX4_INFO("lin vel: %f %f %f \t ang vel: %f %f %f",
+            vision_vel.vx,vision_vel.vy,vision_vel.vz,
+            vision_vel.rollspeed,vision_vel.pitchspeed,
+            vision_vel.yawspeed);
+#endif
+      }
+
+      if (fds[4].revents & POLLIN) {
         orb_copy(ORB_ID(nn_out),
             nn_ctl_out_sub_fd,
             &nn_ctl_out);
         //TODO pack and send nn_ctl_out
       }
 
-      nav->update_pose(&vision_pos,&vision_att);
+      nav->update_pose(&vision_pos,&vision_att,&vision_vel);
 
       // If manual interrupt, reset setpoints 
       // If interrupting w/kill switch, set
@@ -333,29 +351,51 @@ int pack_position_estimate(elka_packet_s *snd,
   // Error of form [xe,ye,ze,vxe,vye,vze,yawe,vyawe]
   float e[8];
   uint8_t data_len=32,data[32];
+  uint16_t base_thrust;
 
   static math::Vector<12> body_pose_e;
 
   body_pose_e=curr_err->get_body_pose();
+  base_thrust=curr_err->get_base_thrust(); 
 
   // Sending body frame error in mm/rad
-  e[0] = (float)(body_pose_e(1)*1000);
+  e[0] = (float)(-body_pose_e(1)*1000);
   e[1] = (float)(-body_pose_e(0)*1000);
   e[2] = (float)(body_pose_e(2)*1000);
-  e[3] = (float)(body_pose_e(4)*1000);
+  e[3] = (float)(-body_pose_e(4)*1000);
   e[4] = (float)(-body_pose_e(3)*1000);
   e[5] = (float)(body_pose_e(5)*1000);
-  e[6] = (float)body_pose_e(8);
+  //TODO fix temp yaw correction
+  e[6] = (float)body_pose_e(8)-M_PI_2_F; 
   e[7] = (float)body_pose_e(11);
 
+  // Set error to zero if within error band
+  if (fabs(e[0])<POSITION_EPSILON*1000) e[0]=0;
+  else if (fabs(e[0])>POSITION_MAX*1000) e[0]=0;
+  if (fabs(e[1])<POSITION_EPSILON*1000) e[1]=0;
+  else if (fabs(e[1])>POSITION_MAX*1000) e[1]=0;
+  if (fabs(e[2])<POSITION_EPSILON*1000) e[2]=0;
+  else if (fabs(e[2])>POSITION_MAX*1000) e[2]=0;
+  if (fabs(e[3])<VELOCITY_EPSILON*1000) e[3]=0;
+  else if (fabs(e[3])>VELOCITY_MAX*1000) e[3]=0;
+  if (fabs(e[4])<VELOCITY_EPSILON*1000) e[4]=0;
+  else if (fabs(e[4])>VELOCITY_MAX*1000) e[4]=0;
+  if (fabs(e[5])<VELOCITY_EPSILON*1000) e[5]=0;
+  else if (fabs(e[5])>VELOCITY_MAX*1000) e[5]=0;
+  if (fabs(e[6])<ANGLE_EPSILON*1000) e[6]=0;
+  else if (fabs(e[6])>ANGLE_MAX*1000) e[6]=0;
+  if (fabs(e[7])<ANGLE_RATE_EPSILON*1000) e[7]=0;
+  else if (fabs(e[7])>ANGLE_RATE_MAX*1000) e[7]=0;
+
 #if defined(ELKA_DEBUG) && defined(DEBUG_POSE)
-  PX4_INFO("xe: %f ye: %f ze: %f\n\
+  PX4_INFO("t: %" PRIu16 " xe: %f ye: %f ze: %f\n\
 vxe: %f vye: %f vze: %f\n\
 yawe: %f vyawe: %f",
-    e[0],e[1],e[2],e[3],e[4],e[5],e[6],e[7]);
+    base_thrust,e[0],e[1],e[2],e[3],e[4],e[5],e[6],e[7]);
 #endif
 
-  serialize(&(data[0]),&e,8*sizeof(float));
+  serialize(&(data[0]),&base_thrust,2);
+  serialize(&(data[2]),&e,8*sizeof(float));
 
   return append_pkt(
           snd,
@@ -468,6 +508,23 @@ void msg_set_serial_state(int msg_type,
                           vehicle_local_position_s *pos,
                           vehicle_attitude_s *att) {
   if (!(old_msg(pos->timestamp) || old_msg(att->timestamp))) {
+    if (_serial_state != SERIAL_STATE_KILL &&
+        _serial_state != SERIAL_STATE_SPEKTRUM) {
+      if (msg_type == MSG_TYPE_VISION_POS ||
+          msg_type == MSG_TYPE_LOCAL_POS ||
+          msg_type == MSG_TYPE_SETPOINT) {
+        _serial_state = SERIAL_STATE_POSE;
+      } else {
+        _serial_state = SERIAL_STATE_NONE;
+      }
+    }
+    _prev_state_update = hrt_absolute_time();
+  }
+}
+
+void msg_set_serial_state(int msg_type,
+                          vision_velocity_s *vel) {
+  if (!old_msg(vel->timestamp)) {
     if (_serial_state != SERIAL_STATE_KILL &&
         _serial_state != SERIAL_STATE_SPEKTRUM) {
       if (msg_type == MSG_TYPE_VISION_POS ||

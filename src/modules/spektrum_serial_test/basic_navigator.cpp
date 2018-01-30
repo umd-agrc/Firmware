@@ -123,27 +123,31 @@ void elka::BasicNavigator::set_err(pose_stamped_s *p) {
 }
 
 void elka::BasicNavigator::update_pose(vehicle_local_position_s *p,
-                                       vehicle_attitude_s *a) {
+                                       vehicle_attitude_s *a,
+                                       vision_velocity_s *v) {
   hrt_abstime t_p=p->timestamp,
-              t_a=a->timestamp;
+              t_a=a->timestamp,
+              t_v=v->timestamp;
   float *q=a->q; // yaw cw about down axis
   float x=p->x,
         y=p->y,
         z=p->z;
-        //vx=p->vx,
-        //vy=p->vy,
-        //vz=p->vz,
-        //rs=a->rollspeed,
-        //ps=a->pitchspeed,
-        //ys=a->yawspeed;
+        vx=v->vx,
+        vy=v->vy,
+        vz=v->vz,
+        rs=v->rollspeed,
+        ps=v->pitchspeed,
+        ys=v->yawspeed;
+  /*
   // Low pass derivative filter on vx,vy,vz
   static uint8_t filt_states[STATE_LEN]=
       {FILT_NONE,FILT_NONE,FILT_NONE,
        FILT_DERIV,FILT_DERIV,FILT_DERIV,
        FILT_NONE,FILT_NONE,FILT_NONE,FILT_NONE,
        FILT_DERIV,FILT_DERIV,FILT_DERIV};
+  */
 
-  static math::Vector<3>inert_pos, sf_elka_t_curr;
+  static math::Vector<3>inert_pos,inert_vel,sf_elka_t_curr;
   static math::Matrix<3,3>sf_rot;
 
   _est.update_prev_pose();
@@ -153,6 +157,9 @@ void elka::BasicNavigator::update_pose(vehicle_local_position_s *p,
   _est.set_pose(7,t_a,*(q+1));
   _est.set_pose(8,t_a,*(q+2));
   _est.set_pose(9,t_a,*(q+3));
+  _est.set_pose(10,t_v,rs);
+  _est.set_pose(11,t_v,ps);
+  _est.set_pose(12,t_v,ys);
 
   // Update inertial snapdragon pose to align with ELKA inertial frame
   // In Elka inertial frame, use elka origin, forward-right-down coords
@@ -161,14 +168,23 @@ void elka::BasicNavigator::update_pose(vehicle_local_position_s *p,
   inert_pos(0)=y+_elka_sf_t(0);
   inert_pos(1)=-x+_elka_sf_t(1);
   inert_pos(2)=z+_elka_sf_t(2);
+  inert_vel(0)=vy;
+  inert_vel(1)=-vx;
+  inert_vel(2)=vz;
 
   // Get rotation 
-  sf_rot=_est.get_pose()->get_rot();
+  sf_rot=_est.get_pose()->get_rot().inversed();
 
   // Get body frame translation offset from sf->elka
   sf_elka_t_curr=-_elka_sf_r*sf_rot*_elka_sf_t;
 
+  // Transform position and velocity to ELKA-centered
   inert_pos += sf_elka_t_curr;
+  //TODO Confirm rs is inertial frame,
+  //     else do transform to get dphi,dtheta,dpsi
+  inert_vel(0) -= _elka_sf_t(1)*ys - _elka_sf_t(2)*ps
+  inert_vel(1) -= _elka_sf_t(2)*rs - _elka_sf_t(0)*ys
+  inert_vel(2) -= _elka_sf_t(0)*ps - _elka_sf_t(1)*rs
 
 #if defined(ELKA_DEBUG) && defined(DEBUG_TRANSFORM)
   /*
@@ -177,72 +193,99 @@ void elka::BasicNavigator::update_pose(vehicle_local_position_s *p,
            eul(0),eul(1),eul(2));
   PX4_INFO("sf_elka_t_curr: %3.3f,%3.3f,%3.3f",
            sf_elka_t_curr(0),sf_elka_t_curr(1),sf_elka_t_curr(2));
+   */
   PX4_INFO("inert_pos: %3.3f,%3.3f,%3.3f",
            inert_pos(0),inert_pos(1),inert_pos(2));
-           */
+  PX4_INFO("inert_vel: %3.3f,%3.3f,%3.3f",
+           inert_vel(0),inert_vel(1),inert_vel(2));
 #endif
 
   // Set estimator position
   _est.set_pose(0,t_p,inert_pos(0));
   _est.set_pose(1,t_p,inert_pos(1));
   _est.set_pose(2,t_p,inert_pos(2));
+  _est.set_pose(3,t_p,inert_vel(0));
+  _est.set_pose(4,t_p,inert_vel(1));
+  _est.set_pose(5,t_p,inert_vel(2));
 
   // Low pass filter to set estimator velocity
-  _est.low_pass_filt(filt_states);
+  //_est.low_pass_filt(filt_states);
+
+#if defined(ELKA_DEBUG) && defined(DEBUG_VISION_VELOCITY)
+        PX4_INFO("lin vel: %f %f %f \t ang vel: %f %f %f",
+            v.vx,v.vy,v.vz,
+            v.rollspeed,v.pitchspeed,
+            v.yawspeed);
+#endif
 
   // Set Elka inertial error and next setpoint
   // In this case, we don't set angle error
   // Set absolute angle so that we can retrieve body position
   // from absolute angles
   next_setpoint();
-
-#if defined(ELKA_DEBUG) && defined(DEBUG_TRANSFORM)
-    PX4_INFO("curr_err: %3.3f,%3.3f,%3.3f",
-           _curr_err.pose(0),_curr_err.pose(1),_curr_err.pose(2));
-#endif
 }
 
 void elka::BasicNavigator::add_setpoint(
-	hrt_abstime dt,uint8_t param_mask,math::Vector<STATE_LEN>*v) {
+	hrt_abstime dt,
+  uint8_t param_mask,
+  math::Vector<STATE_LEN>*v,
+  uint16_t base_thrust) {
 	math::Vector<3> offset_rot,
 									offset_trans;
 	offset_rot=
 		_elka_sf_r.inversed().to_euler();
 	offset_trans=-_elka_sf_t;
-	pose_stamped_s p(dt,param_mask,v);
+	pose_stamped_s p(dt,param_mask,v,base_thrust);
   p.set_offset(&offset_rot,
 							 &offset_trans);
 	_setpoints.push_back(p);
 }
+
+/* TODO
+void elka::BasicNavigator::add_setpoint(uint8_t param_mask, setpoint_s *s) {
+
+}
+*/
 
 uint8_t elka::BasicNavigator::takeoff(float z,bool hold) {
   math::Vector<STATE_LEN> tmp;
 	hrt_abstime t;
   float eps;
   uint8_t param_mask=0;
-	t=TAKEOFF_SETPOINT_DEFAULT_LEN;
+	t=5*TAKEOFF_SETPOINT_DEFAULT_LEN;
 	tmp=get_pose()->pose;
+	tmp(3)=0;
 	tmp(4)=0;
-	tmp(5)=0;
 	tmp(10)=0;
 	tmp(11)=0;
 	tmp(12)=0;
   float dz=0;
   tmp(2)=dz;
-  tmp(3)=VERTICAL_DEFAULT_SPEED*((z-dz)/z);
+  tmp(5)=VERTICAL_DEFAULT_SPEED*((z-dz)/z);
   eps=fabs(z-dz);
-  if (eps<POSITION_EPSILON)
+  if (eps<POSITION_EPSILON) {
     if (hold) param_mask|=SETPOINT_PARAM_HOLD;
-  add_setpoint(t,param_mask,&tmp);
+    tmp(5)=0;
+  }
+#if defined(ELKA_DEBUG) && defined(DEBUG_GAINS)
+  add_setpoint(t,param_mask,&tmp,TEST_DEFAULT_THRUST);
+#else
+  add_setpoint(t,param_mask,&tmp,HOVER_DEFAULT_THRUST);
+#endif
   while (eps>POSITION_EPSILON) {
     dz=dz+(z-dz)/2;
     eps=fabs(z-dz);
     tmp(2)=dz;
-    tmp(3)=VERTICAL_DEFAULT_SPEED*((z-dz)/z);
-    PX4_INFO("HERE %f",VERTICAL_DEFAULT_SPEED*((z-dz)/z));
-    if (eps<POSITION_EPSILON)
+    tmp(5)=VERTICAL_DEFAULT_SPEED*((z-dz)/z);
+    if (eps<POSITION_EPSILON) {
       if (hold) param_mask|=SETPOINT_PARAM_HOLD;
-    add_setpoint(t,param_mask,&tmp);
+      tmp(5)=0;
+    }
+#if defined(ELKA_DEBUG) && defined(DEBUG_GAINS)
+  add_setpoint(t,param_mask,&tmp,TEST_DEFAULT_THRUST);
+#else
+    add_setpoint(t,param_mask,&tmp,HOVER_DEFAULT_THRUST);
+#endif
   }
   return ELKA_SUCCESS;
 }
@@ -252,7 +295,12 @@ uint8_t elka::BasicNavigator::hover(bool hold) {
 	hrt_abstime t;
   uint8_t param_mask=0;
   if (hold) param_mask|=SETPOINT_PARAM_HOLD;
-	t=SETPOINT_DEFAULT_LEN;
+
+#if defined(ELKA_DEBUG) && defined(DEBUG_HOVER_HOLD)
+	t=1000*SETPOINT_DEFAULT_LEN;
+#else
+  t=100*SETPOINT_DEFAULT_LEN;
+#endif
   // For hover, keep current x,y,z
 	tmp=get_pose()->pose;
 	tmp(3)=0;
@@ -261,38 +309,53 @@ uint8_t elka::BasicNavigator::hover(bool hold) {
 	tmp(10)=0;
 	tmp(11)=0;
 	tmp(12)=0;
-  add_setpoint(t,param_mask,&tmp);
+#if defined(ELKA_DEBUG) && defined(DEBUG_GAINS)
+  add_setpoint(t,param_mask,&tmp,TEST_DEFAULT_THRUST);
+#else
+  add_setpoint(t,param_mask,&tmp,HOVER_DEFAULT_THRUST);
+#endif
   return ELKA_SUCCESS;
 }
 
 uint8_t elka::BasicNavigator::land(bool hold) {
   math::Vector<STATE_LEN> tmp;
 	hrt_abstime t;
+#if defined(ELKA_DEBUG) && defined(DEBUG_GAINS)
+  uint16_t base_thrust=TEST_DEFAULT_THRUST;
+#else
+  uint16_t base_thrust=LAND_DEFAULT_THRUST;
+#endif
   uint8_t param_mask=0;
 	t=LANDING_SETPOINT_DEFAULT_LEN;
 	tmp=get_pose()->pose;
-  tmp(3)=-VERTICAL_DEFAULT_SPEED;
+	tmp(3)=0;
 	tmp(4)=0;
-	tmp(5)=0;
+  tmp(5)=-VERTICAL_DEFAULT_SPEED;
 	tmp(10)=0;
 	tmp(11)=0;
 	tmp(12)=0;
   float z=tmp(2),init_z=tmp(2);
-  tmp(3)=-VERTICAL_DEFAULT_SPEED*(z/init_z);
+  tmp(5)=-VERTICAL_DEFAULT_SPEED*(z/init_z);
   // Check if landed. Can land lower than LAND_DEFAULT_HEIGHT,
   // but not higher
-  if (z-LAND_DEFAULT_HEIGHT<LANDING_HEIGHT_EPSILON) {
+  if (fabs(z-LAND_DEFAULT_HEIGHT)<LANDING_HEIGHT_EPSILON) {
     if (hold) param_mask|=SETPOINT_PARAM_LAND|SETPOINT_PARAM_HOLD;
+    else param_mask|=SETPOINT_PARAM_LAND;
+    tmp(5)=0;
+    base_thrust=0;
   }
-  add_setpoint(t,param_mask,&tmp);
-  while (z-LAND_DEFAULT_HEIGHT>LANDING_HEIGHT_EPSILON) {
+  add_setpoint(t,param_mask,&tmp,base_thrust);
+  while (fabs(z-LAND_DEFAULT_HEIGHT)>LANDING_HEIGHT_EPSILON) {
     z-=(z-LAND_DEFAULT_HEIGHT)/1.5;
     tmp(2)=z;
-    tmp(3)=-VERTICAL_DEFAULT_SPEED*(z/init_z);
-    if (z-LAND_DEFAULT_HEIGHT<LANDING_HEIGHT_EPSILON) {
+    tmp(5)=-VERTICAL_DEFAULT_SPEED*(z/init_z);
+    if (fabs(z-LAND_DEFAULT_HEIGHT)<LANDING_HEIGHT_EPSILON) {
       if (hold) param_mask|=SETPOINT_PARAM_LAND|SETPOINT_PARAM_HOLD;
+      else param_mask|=SETPOINT_PARAM_LAND;
+      tmp(5)=0;
+      base_thrust=0;
     }
-    add_setpoint(t,param_mask,&tmp);
+    add_setpoint(t,param_mask,&tmp,base_thrust);
   }
   return ELKA_SUCCESS;
 }
@@ -307,6 +370,7 @@ void elka::BasicNavigator::reset_setpoints() {
   _new_setpoint=true;
 }
 
+//FIXME
 bool elka::BasicNavigator::at_setpoint() {
   // Retrieve norm of position error as norm error
   float norm_curr_err = _curr_err.pos_norm();
@@ -317,9 +381,18 @@ bool elka::BasicNavigator::at_setpoint() {
   return _at_setpoint;
 }
 
+//FIXME Should we still be correcting angle error like this?
+//      Velocity error should scale with position error
 void elka::BasicNavigator::update_error(pose_stamped_s *curr_setpoint) {
   if (curr_setpoint) {
-    _curr_err.pose=_est.get_pose()->pose-curr_setpoint->pose;
+    _curr_err.pose=curr_setpoint->pose-_est.get_pose()->pose;
+    _curr_err.base_thrust=curr_setpoint->base_thrust;
+    // Because velocity is set on a time basis, it will not account
+    // for things like position overshoot. Thus, it is important to allow
+    // velocity to change signs. The way it is done here is with
+    // the SIGMOID function wrt position, which has the added benefit
+    // of allowing setpoint velocity to be lower if the vehicle is
+    // closer to the setpoint.
     _curr_err.pose(6)=_est.get_pose(6);
     _curr_err.pose(7)=_est.get_pose(7);
     _curr_err.pose(8)=_est.get_pose(8);
@@ -329,7 +402,16 @@ void elka::BasicNavigator::update_error(pose_stamped_s *curr_setpoint) {
     //TODO move to next_setpoint() function
     _wait=true;
   }
+#if defined(ELKA_DEBUG) && defined(DEBUG_TRANSFORM_ERROR)
+  PX4_INFO("curr_err: %3.3f,%3.3f,%3.3f,%3.3f,%3.3f,%3.3f",
+         _curr_err.pose(0),_curr_err.pose(1),_curr_err.pose(2),
+         _curr_err.pose(3),_curr_err.pose(4),_curr_err.pose(5));
+#endif
 }
+
+//void elka::BasicNavigator::update_error(setpoint_s *curr_setpoint) {
+//  TODO
+//}
 
 int8_t elka::BasicNavigator::generate_setpoints(
     std::vector<math::Vector<POSITION_LEN>> p) {
@@ -342,10 +424,32 @@ int8_t elka::BasicNavigator::generate_setpoints(
     s[1]=(*it)(1);
     s[2]=(*it)(2);
     v=math::Vector<STATE_LEN>(s);
-    add_setpoint(dt,param_mask,&v);
+    add_setpoint(dt,param_mask,&v,HOVER_DEFAULT_THRUST);
   }
   return ELKA_SUCCESS;
 }
+/*
+int8_t elka::BasicNavigator::generate_setpoints(
+    std::vector<math::Vector<POSITION_LEN>> p) {
+  float start[SETPOINT_MAP_LEN],end[SETPOINT_LEN];
+  setpoint_s s;
+  hrt_abstime dt=SETPOINT_DEFAULT_LEN;
+  uint8_t param_mask=0;
+  auto it=p.begin(); 
+  while (it!=p.end()) {
+    start[0]=(*it)(0);
+    start[1]=(*it)(1);
+    start[2]=(*it)(2);
+    end[0]=(*(it+1))(0);
+    end[1]=(*(it+1))(1);
+    end[2]=(*(it+1))(2);
+    s=setpoint_s(dt,start,end,HOVER_DEFAULT_THRUST);
+    add_setpoint(param_mask,&s);
+    it++;
+  }
+  return ELKA_SUCCESS;
+}
+*/
 
 // TODO update to include yaw and yaw rate
 void elka::BasicNavigator::print_setpoints() {

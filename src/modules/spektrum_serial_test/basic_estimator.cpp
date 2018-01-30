@@ -85,7 +85,7 @@ void elka::BasicEstimator::update_prev_pose(uint8_t n) {
 
 void elka::BasicEstimator::low_pass_filt(
     uint8_t *filter_states) {
-  float alpha=0.07;
+  float alpha=0.08;
   hrt_abstime t;
   float dt=0;
   for (uint8_t i=0; i < STATE_LEN; i++) {

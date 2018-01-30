@@ -136,6 +136,7 @@ MavlinkReceiver::MavlinkReceiver(Mavlink *parent) :
 	_debug_key_value_pub(nullptr),
 	_debug_value_pub(nullptr),
 	_debug_vect_pub(nullptr),
+	_vision_velocity_pub(nullptr),
 	_gps_inject_data_pub(nullptr),
 	_command_ack_pub(nullptr),
 	_control_mode_sub(orb_subscribe(ORB_ID(vehicle_control_mode))),
@@ -333,6 +334,10 @@ MavlinkReceiver::handle_message(mavlink_message_t *msg)
 
 	case MAVLINK_MSG_ID_DEBUG_VECT:
 		handle_message_debug_vect(msg);
+		break;
+
+	case MAVLINK_MSG_ID_VISION_VELOCITY_ESTIMATE:
+		handle_message_vision_velocity_estimate(msg);
 		break;
 
 	default:
@@ -2316,6 +2321,29 @@ void MavlinkReceiver::handle_message_debug_vect(mavlink_message_t *msg)
 	} else {
 		orb_publish(ORB_ID(debug_vect), _debug_vect_pub, &debug_topic);
 	}
+}
+
+void
+MavlinkReceiver::handle_message_vision_velocity_estimate(mavlink_message_t *msg)
+{
+	mavlink_vision_velocity_estimate_t vel;
+
+	mavlink_msg_vision_velocity_estimate_decode(msg, &vel);
+
+	vision_velocity_s vision_velocity = {};
+
+	vision_velocity.timestamp = sync_stamp(vel.usec);
+
+	vision_velocity.vx = vel.vx;
+	vision_velocity.vy = vel.vy;
+	vision_velocity.vz = vel.vz;
+	vision_velocity.rollspeed = vel.rollspeed;
+	vision_velocity.pitchspeed = vel.pitchspeed;
+	vision_velocity.yawspeed = vel.yawspeed;
+
+	int instance_id = 0;
+
+	orb_publish_auto(ORB_ID(vision_velocity), &_vision_velocity_pub, &vision_velocity, &instance_id, ORB_PRIO_DEFAULT);
 }
 
 /**

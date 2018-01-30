@@ -1,11 +1,12 @@
 #TODO
-##Send {X,Y,Z,VX,VY,VZ,Yaw,VYaw} to ELKA
-Check that sign of zerror agrees with sign of vzerror
+##Ensure full transform while computing pose
+Include roll,pitch angles in determination of body pose
 
-##Add trajectory to BasicNavigator
-After landing, must send no signal to motors
-Setpoints should be function-based (order, coefficients)
-Setpoints should also contain `bits_to_set` after completion
+##Decouple pose and motor inputs
+Isolate thrust,roll,pitch,yaw based off of x,y,z,q
+
+##Update landing error
+Error should be based only on altitude
 
 ##Complete simple patterns
 Takeoff, land, spin in circle, move about square

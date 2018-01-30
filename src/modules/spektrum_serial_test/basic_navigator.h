@@ -5,25 +5,32 @@
 #include <inttypes.h>
 #include <stdint.h>
 #include <vector>
+#include <map>
 #include <drivers/drv_hrt.h>
 #include <lib/mathlib/math/Vector.hpp>
 #include <uORB/topics/vehicle_local_position.h>
 #include <uORB/topics/vehicle_attitude.h>
+#include <uORB/topics/vision_velocity.h>
 
 #include "serial_defines.h"
 #include "basic_estimator.h"
 
 // Defines close enough to setpoint position in meters
-#define POSITION_EPSILON 0.1
+#define POSITION_EPSILON 0.05
 #define VELOCITY_EPSILON 0.01
-#define ANGLE_EPSILON 0.01
-#define POSITION_ERROR_DEFAULT 0
+#define ANGLE_EPSILON 0.02
+#define ANGLE_RATE_EPSILON 0.02
+#define POSITION_MAX 5
+#define VELOCITY_MAX 3
+#define ANGLE_MAX 21
+#define ANGLE_RATE_MAX 21
+#define POSITION_ERROR_DEFAULT 6
 #define VELOCITY_ERROR_DEFAULT 0
 #define ANGLE_ERROR_DEFAULT 0
-#define POSITION_ERROR_THRES 0.2
-#define VELOCITY_ERROR_THRES 0.4
-#define ANGLE_ERROR_THRES 0.1
-#define ANGLE_RATE_ERROR_THRES 0.1
+#define POSITION_ERROR_THRES 0.1
+#define VELOCITY_ERROR_THRES 0.1
+#define ANGLE_ERROR_THRES 0.05
+#define ANGLE_RATE_ERROR_THRES 0.05
 // Define error threshold as norm({*_ERROR_THRES})
 #define ERROR_THRES 1 
 
@@ -31,6 +38,14 @@
 #define LANDING_HEIGHT_EPSILON 0.1
 
 #define POSITION_LEN 5
+// Don't neet derivative values in setpoints.
+// These can be derived from interpolating spline
+#define SETPOINT_MAP_LEN 5 // x,y,z,yaw,yawrate
+
+#define SETPOINT_X "x"
+#define SETPOINT_Y "y"
+#define SETPOINT_Z "z"
+#define SETPOINT_YAW "l"
 
 namespace elka {
   class BasicNavigator;
@@ -39,7 +54,13 @@ namespace elka {
 
 struct setpoint_s {
   hrt_abstime _dt,_start;
-  std::vector<math::Vector<SETPOINT_FUNCTION_ORDER>> _coefs;
+  std::map<char,math::Vector<SETPOINT_FUNCTION_ORDER>> _coefs;
+  setpoint_s(
+      hrt_abstime dt,
+      float start[SETPOINT_MAP_LEN],
+      float end[SETPOINT_MAP_LEN],
+      uint16_t base_thrust) {
+  }
 };
 
 // PlanElement includes type and 3D 
@@ -115,6 +136,7 @@ private:
 
   elka::BasicEstimator _est; // estimated state in elka inertial frame
   std::vector<pose_stamped_s> _setpoints; // stores current setpoint
+  //std::vector<setpoint_s> _setpoints; // stores current setpoint
   pose_stamped_s _curr_err;
 	// Store transformation from elka
 	// to snapdragon
@@ -152,7 +174,10 @@ public:
                    vehicle_attitude_s *a);
 	// Clear setpoints 
   void add_setpoint(
-      hrt_abstime t,uint8_t param_mask,math::Vector<STATE_LEN>*v);
+      hrt_abstime t,
+      uint8_t param_mask,
+      math::Vector<STATE_LEN>*v,
+      uint16_t base_thrust);
   uint8_t takeoff(float z,bool hold);
 	// Generate hover setpoint
 	// Hover at current {x,y,z,yaw} for default length of time
@@ -167,6 +192,7 @@ public:
       std::vector<math::Vector<POSITION_LEN>> p);
   void print_setpoints();
   void update_error(pose_stamped_s *curr_setpoint);
+  //void update_error(setpoint_s *curr_setpoint);
 
   void copy_pose_error(
       vehicle_local_position_s *p,

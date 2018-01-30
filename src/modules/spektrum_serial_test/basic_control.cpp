@@ -32,6 +32,7 @@ elka::BasicController::BasicController() {
 
 int8_t elka::BasicController::start() {
   if (!thread_running_) {
+    usleep(400000);
     char thread_name[256];
     sprintf(thread_name,"elka_controller");
     thread_should_exit_ = false;
@@ -123,13 +124,18 @@ int8_t elka::BasicController::parse_plan_file(const char *plan_file) {
 					PLAN_ELEMENT_DEFAULT_LEN));
       } else if (!strcmp(phrase[k],"takeoff")) {
         _plan.insert(new PlanElement(PLAN_ELEMENT_TAKEOFF,
-					PLAN_ELEMENT_DEFAULT_LEN));
+					3*PLAN_ELEMENT_DEFAULT_LEN));
       } else if (!strcmp(phrase[k],"land")) {
         _plan.insert(new PlanElement(PLAN_ELEMENT_LAND,
 					PLAN_ELEMENT_DEFAULT_LEN));
       } else if (!strcmp(phrase[k],"hover")) {
+#if defined(ELKA_DEBUG) && defined(DEBUG_HOVER_HOLD)
+        _plan.insert(new PlanElement(PLAN_ELEMENT_HOVER,
+					100*PLAN_ELEMENT_DEFAULT_LEN));
+#else
         _plan.insert(new PlanElement(PLAN_ELEMENT_HOVER,
 					PLAN_ELEMENT_DEFAULT_LEN));
+#endif
       } else {
         PX4_WARN("Unrecognized plan word %s",phrase[k]);
       }
@@ -165,7 +171,7 @@ int8_t elka::BasicController::execute_plan() {
       ret=_nav.takeoff(HOVER_DEFAULT_HEIGHT,true);
       break;
     case PLAN_ELEMENT_LAND:
-      ret=_nav.land(true);
+      ret=_nav.land(false);
       break;
     case PLAN_ELEMENT_HOVER:
       ret=_nav.hover(true);
@@ -228,6 +234,7 @@ void elka::BasicController::print_state() {
 }
 
 int run_controller(int argc, char **argv) {
+  usleep(200000);
   elka::BasicController *ctl=elka::BasicController::instance();
   thread_running_=true;
   thread_should_exit_=false;

@@ -8,6 +8,7 @@
 #include <lib/mathlib/math/Quaternion.hpp>
 #include <uORB/topics/input_rc.h>
 #include <uORB/topics/vehicle_local_position.h>
+#include <uORB/topics/vision_velocity.h>
 #include <uORB/topics/vehicle_attitude.h>
 #include <uORB/topics/sensor_combined.h>
 #include <uORB/topics/elka_msg.h>
@@ -49,6 +50,8 @@ void msg_set_serial_state(int msg_type, input_rc_s *input_rc);
 void msg_set_serial_state(int msg_type,
                           vehicle_local_position_s *pos,
                           vehicle_attitude_s *att);
+void msg_set_serial_state(int msg_type,
+                          vision_velocity_s *vel);
 inline bool check_state(int msg_type);
 
 inline bool old_msg(hrt_abstime msg_time);

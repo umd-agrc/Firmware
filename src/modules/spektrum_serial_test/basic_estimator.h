@@ -54,6 +54,7 @@ namespace elka {
 
 #define BAD_NUM(x) (isnan(abs(x)) || isinf(abs(x)))
 
+#define SIGMOID(x) 2*(exp(x)/(exp(x)+1)-.5) // scales between [-1,1]
 
 struct sensor_stamped_s {
   uint8_t type;
@@ -130,14 +131,15 @@ struct sensor_stamped_s {
 };
 
 struct pose_stamped_s {
-  bool initialized,timeout,hold,land;
-  hrt_abstime init_time,t[STATE_LEN];
   math::Vector<STATE_LEN>pose;
   math::Quaternion q;
   math::Vector<3> eul,body_pos,body_vel;
   math::Matrix<3,3> rot;
   math::Vector<3> offset_t;
   math::Matrix<3,3> offset_r;
+  hrt_abstime init_time,t[STATE_LEN];
+  uint16_t base_thrust=0;
+  bool initialized,timeout,hold,land;
 
   pose_stamped_s() {
     initialized=false;
@@ -151,12 +153,14 @@ struct pose_stamped_s {
   //Use this initializer if using pose as setpoint
   pose_stamped_s(hrt_abstime tau,
       uint8_t param_mask,
-      math::Vector<STATE_LEN> *v) {
+      math::Vector<STATE_LEN> *v,
+      uint16_t thrust) {
     initialized=false;
     timeout=false;
     hold=param_mask&SETPOINT_PARAM_HOLD;
     land=param_mask&SETPOINT_PARAM_LAND;
     set_pose(tau,v);
+    base_thrust=thrust;
   }
   pose_stamped_s(pose_stamped_s *p) {
     initialized=false;
@@ -242,9 +246,9 @@ struct pose_stamped_s {
     body_pos(1)=pose(1);
     body_pos(2)=pose(2);
     body_pos=rot*body_pos;
-    body_vel(3)=pose(3);
-    body_vel(4)=pose(4);
-    body_vel(5)=pose(5);
+    body_vel(0)=pose(3);
+    body_vel(1)=pose(4);
+    body_vel(2)=pose(5);
     body_vel=rot*body_vel;
   }
   math::Matrix<3,3>get_rot(){
@@ -295,6 +299,10 @@ struct pose_stamped_s {
     s(10)=pose(11);
     s(11)=pose(12);
     return s;
+  }
+
+  uint16_t get_base_thrust() {
+    return base_thrust;
   }
 };
 

@@ -123,6 +123,7 @@ set(msg_files
 	vehicle_roi.msg
 	vehicle_status.msg
 	vehicle_status_flags.msg
+  vision_velocity.msg
 	vtol_vehicle_status.msg
 	wind_estimate.msg
 	)
