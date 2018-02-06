@@ -15,11 +15,12 @@ elka::BasicNavigator::BasicNavigator() {
   // Rotation from sf to elka
   math::Vector<3> offset_r = {0,0,M_PI_2_F};
   // Translation from sf to elka
-  math::Vector<3> offset_t = {-0.13,0,-0.05};
+  math::Vector<3> offset_t = {-0.094,0,-0.04};
   set_fcu_offset(&offset_r,&offset_t);
   _at_setpoint=false;_new_setpoint=false;
   _wait=false;_landed=false;_from_manual=false;_kill=false;
 }
+// 
 
 elka::BasicNavigator::~BasicNavigator() {
 }
@@ -122,44 +123,46 @@ void elka::BasicNavigator::set_err(pose_stamped_s *p) {
   _curr_err.set_pose(p);
 }
 
+math::Vector<12> elka::BasicNavigator::get_body_pose_error() {
+  return _curr_err.get_body_pose();
+}
+
 void elka::BasicNavigator::update_pose(vehicle_local_position_s *p,
                                        vehicle_attitude_s *a,
                                        vision_velocity_s *v) {
   hrt_abstime t_p=p->timestamp,
               t_a=a->timestamp,
               t_v=v->timestamp;
-  float *q=a->q; // yaw cw about down axis
   float x=p->x,
         y=p->y,
-        z=p->z;
+        z=p->z,
         vx=v->vx,
         vy=v->vy,
-        vz=v->vz,
-        rs=v->rollspeed,
-        ps=v->pitchspeed,
-        ys=v->yawspeed;
-  /*
-  // Low pass derivative filter on vx,vy,vz
-  static uint8_t filt_states[STATE_LEN]=
-      {FILT_NONE,FILT_NONE,FILT_NONE,
-       FILT_DERIV,FILT_DERIV,FILT_DERIV,
-       FILT_NONE,FILT_NONE,FILT_NONE,FILT_NONE,
-       FILT_DERIV,FILT_DERIV,FILT_DERIV};
-  */
-
-  static math::Vector<3>inert_pos,inert_vel,sf_elka_t_curr;
+        vz=v->vz;
+  static math::Vector<3>inert_pos,inert_vel,
+    body_axis_rate_curr,
+    inertial_angle_rate_curr,
+    sf_elka_t_curr,
+    sf_elka_radii,
+    sf_elka_inert_rot;
   static math::Matrix<3,3>sf_rot;
-
+  static math::Quaternion q;
   _est.update_prev_pose();
 
   // Update angles and angle rates
-  _est.set_pose(6,t_a,*q);
-  _est.set_pose(7,t_a,*(q+1));
-  _est.set_pose(8,t_a,*(q+2));
-  _est.set_pose(9,t_a,*(q+3));
-  _est.set_pose(10,t_v,rs);
-  _est.set_pose(11,t_v,ps);
-  _est.set_pose(12,t_v,ys);
+  // Update angles first so that transformation from body-axis to
+  // euler-angle rates can be performed wrt most recent orientation
+  // FIXME DEBUG quaternion formation and subsequent rotations!!!
+  q=math::Quaternion(a->q);
+  q.from_dcm(_elka_sf_r*(q.to_dcm()));
+  _est.set_pose(6,t_a,q(0));
+  _est.set_pose(7,t_a,q(1));
+  _est.set_pose(8,t_a,q(2));
+  _est.set_pose(9,t_a,q(3));
+
+  body_axis_rate_curr={v->rollspeed,-v->pitchspeed,-v->yawspeed};
+  _est.set_euler_angle_rates(t_v,body_axis_rate_curr(0),
+      body_axis_rate_curr(1),body_axis_rate_curr(2));
 
   // Update inertial snapdragon pose to align with ELKA inertial frame
   // In Elka inertial frame, use elka origin, forward-right-down coords
@@ -168,36 +171,82 @@ void elka::BasicNavigator::update_pose(vehicle_local_position_s *p,
   inert_pos(0)=y+_elka_sf_t(0);
   inert_pos(1)=-x+_elka_sf_t(1);
   inert_pos(2)=z+_elka_sf_t(2);
-  inert_vel(0)=vy;
-  inert_vel(1)=-vx;
-  inert_vel(2)=vz;
+
+  inert_vel(0)=vx;
+  inert_vel(1)=-vy;
+  inert_vel(2)=-vz;
 
   // Get rotation 
   sf_rot=_est.get_pose()->get_rot().inversed();
 
-  // Get body frame translation offset from sf->elka
+  // Get inertial frame frame translation offset from sf->elka
   sf_elka_t_curr=-_elka_sf_r*sf_rot*_elka_sf_t;
 
   // Transform position and velocity to ELKA-centered
   inert_pos += sf_elka_t_curr;
-  //TODO Confirm rs is inertial frame,
-  //     else do transform to get dphi,dtheta,dpsi
-  inert_vel(0) -= _elka_sf_t(1)*ys - _elka_sf_t(2)*ps
-  inert_vel(1) -= _elka_sf_t(2)*rs - _elka_sf_t(0)*ys
-  inert_vel(2) -= _elka_sf_t(0)*ps - _elka_sf_t(1)*rs
+
+  // Compute inertial axis radii of sf_elka offset:
+  //  radius xy
+  //  radius yz
+  //  radius zx 
+  sf_elka_radii={
+    sqrtf(pow(sf_elka_t_curr(0),2)+pow(sf_elka_t_curr(1),2)),
+    sqrtf(pow(sf_elka_t_curr(1),2)+pow(sf_elka_t_curr(2),2)),
+    sqrtf(pow(sf_elka_t_curr(0),2)+pow(sf_elka_t_curr(2),2))
+  };
+
+  // FIXME domain error if both inputs to atan2 are 0
+  // Compute inertial axis rotation angles:
+  //  theta xy, (q1 back->left)
+  //  theta yz, (q1 left->up)
+  //  theta zx, (q1 up->back)
+  sf_elka_inert_rot={
+      atan2(sf_elka_t_curr(1),sf_elka_t_curr(0)),
+      atan2(sf_elka_t_curr(2),sf_elka_t_curr(1)),
+      atan2(sf_elka_t_curr(0),sf_elka_t_curr(2))
+  };
+
+  // Get inertial frame angle rates
+  inertial_angle_rate_curr=
+    -_elka_sf_r*sf_rot*body_axis_rate_curr;
+
+  // x = -r_xy*yaw(cw)-r_zx*pitch(back)
+  inert_vel(0) -= 
+    -sf_elka_radii(0)*sin(sf_elka_inert_rot(0))
+      *inertial_angle_rate_curr(2)
+    +sf_elka_radii(2)*cos(sf_elka_inert_rot(2))
+      *inertial_angle_rate_curr(1);
+  // y += r_yz*roll(right) - r_xy*yaw(cw)
+  inert_vel(1) -= 
+    -sf_elka_radii(0)*cos(sf_elka_inert_rot(0))
+      *inertial_angle_rate_curr(2)
+    -sf_elka_radii(1)*sin(sf_elka_inert_rot(1))
+      *inertial_angle_rate_curr(0);
+  // z += r_xz*pitch(back) - r_yz*roll(right)
+  inert_vel(2) -= 
+    sf_elka_radii(1)*cos(sf_elka_inert_rot(1))
+      *inertial_angle_rate_curr(0)
+    -sf_elka_radii(2)*sin(sf_elka_inert_rot(2))
+      *inertial_angle_rate_curr(1);
 
 #if defined(ELKA_DEBUG) && defined(DEBUG_TRANSFORM)
   /*
   math::Vector<3>eul=_est.get_pose()->get_eul();
   PX4_INFO("euler angles: %3.3f,%3.3f,%3.3f",
            eul(0),eul(1),eul(2));
+  PX4_INFO("body axis rates: %3.3f,%3.3f,%3.3f",
+           body_axis_rate_curr(0),body_axis_rate_curr(1),
+           body_axis_rate_curr(2));
   PX4_INFO("sf_elka_t_curr: %3.3f,%3.3f,%3.3f",
            sf_elka_t_curr(0),sf_elka_t_curr(1),sf_elka_t_curr(2));
-   */
   PX4_INFO("inert_pos: %3.3f,%3.3f,%3.3f",
            inert_pos(0),inert_pos(1),inert_pos(2));
+  PX4_INFO("inert ang: %3.3f,%3.3f,%3.3f",
+      inertial_angle_rate_curr(0),inertial_angle_rate_curr(1),
+      inertial_angle_rate_curr(2));
   PX4_INFO("inert_vel: %3.3f,%3.3f,%3.3f",
-           inert_vel(0),inert_vel(1),inert_vel(2));
+           inert_vel(0)*100,inert_vel(1)*100,inert_vel(2)*100);
+   */
 #endif
 
   // Set estimator position
@@ -208,14 +257,19 @@ void elka::BasicNavigator::update_pose(vehicle_local_position_s *p,
   _est.set_pose(4,t_p,inert_vel(1));
   _est.set_pose(5,t_p,inert_vel(2));
 
-  // Low pass filter to set estimator velocity
-  //_est.low_pass_filt(filt_states);
-
 #if defined(ELKA_DEBUG) && defined(DEBUG_VISION_VELOCITY)
+  /*
         PX4_INFO("lin vel: %f %f %f \t ang vel: %f %f %f",
-            v.vx,v.vy,v.vz,
-            v.rollspeed,v.pitchspeed,
-            v.yawspeed);
+            v->vx,v->vy,v->vz,
+            v->rollspeed,v->pitchspeed,
+            v->yawspeed);
+            */
+  PX4_INFO("ang vel: %f %f %f",
+      v->rollspeed*100,v->pitchspeed*100,v->yawspeed*100);
+  /*
+  PX4_INFO("lin vel: %f %f %f",
+      inert_vel(0),inert_vel(1),inert_vel(2));
+      */
 #endif
 
   // Set Elka inertial error and next setpoint
@@ -387,16 +441,10 @@ void elka::BasicNavigator::update_error(pose_stamped_s *curr_setpoint) {
   if (curr_setpoint) {
     _curr_err.pose=curr_setpoint->pose-_est.get_pose()->pose;
     _curr_err.base_thrust=curr_setpoint->base_thrust;
-    // Because velocity is set on a time basis, it will not account
-    // for things like position overshoot. Thus, it is important to allow
-    // velocity to change signs. The way it is done here is with
-    // the SIGMOID function wrt position, which has the added benefit
-    // of allowing setpoint velocity to be lower if the vehicle is
-    // closer to the setpoint.
-    _curr_err.pose(6)=_est.get_pose(6);
-    _curr_err.pose(7)=_est.get_pose(7);
-    _curr_err.pose(8)=_est.get_pose(8);
-    _curr_err.pose(9)=_est.get_pose(9);
+    _curr_err.q_act(0)=_est.get_pose(6);
+    _curr_err.q_act(1)=_est.get_pose(7);
+    _curr_err.q_act(2)=_est.get_pose(8);
+    _curr_err.q_act(3)=_est.get_pose(9);
   } else {
     _curr_err.pose.zero();
     //TODO move to next_setpoint() function

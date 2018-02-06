@@ -28,7 +28,7 @@ int spektrum_test_loop(int argc, char **argv);
 // z: Down/Up (+/-)
 // Yaw left/Yaw right(-/+)
 int pack_position_estimate(elka_packet_s *snd,
-                           pose_stamped_s *curr_err);
+                           elka::BasicNavigator *nav);
 int pack_spektrum_cmd(elka_packet_s *snd,
                       uint8_t msg_type,
                       input_rc_s *input_rc);

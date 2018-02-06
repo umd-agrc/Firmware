@@ -2,7 +2,7 @@ px4_add_module(
 	MODULE modules__spektrum_serial_test
 	MAIN spektrum_serial_test
 	STACK_MAIN 4200
-	STACK_MAX 3800
+	STACK_MAX 3600
 	COMPILE_FLAGS
 	SRCS
 		serial_defines.h

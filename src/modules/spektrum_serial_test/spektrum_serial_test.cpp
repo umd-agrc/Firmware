@@ -48,7 +48,7 @@ int spektrum_serial_test_main(int argc, char *argv[]) {
         thread_name,
         SCHED_DEFAULT,
         SCHED_PRIORITY_DEFAULT,
-        1000,
+        1800,
         spektrum_test_loop,
         &argv[2]);
 
@@ -235,12 +235,6 @@ int spektrum_test_loop(int argc, char *argv[]) {
                  &vision_vel);
         msg_set_serial_state(MSG_TYPE_VISION_POS,
                              &vision_vel);
-#if defined(ELKA_DEBUG) && defined(DEBUG_VISION_VELOCITY)
-        PX4_INFO("lin vel: %f %f %f \t ang vel: %f %f %f",
-            vision_vel.vx,vision_vel.vy,vision_vel.vz,
-            vision_vel.rollspeed,vision_vel.pitchspeed,
-            vision_vel.yawspeed);
-#endif
       }
 
       if (fds[4].revents & POLLIN) {
@@ -310,7 +304,7 @@ int spektrum_test_loop(int argc, char *argv[]) {
 
             if (check_state(msg_type) &&
               (pack_position_estimate(&elka_pkt,
-                                      nav->get_err())
+                                      nav)
                != PX4_ERROR)) {
             msg_mgr->send(elka_msgr_d,&elka_pkt);
             usleep(20000);
@@ -347,16 +341,16 @@ int spektrum_test_loop(int argc, char *argv[]) {
 }
 
 int pack_position_estimate(elka_packet_s *snd,
-                           pose_stamped_s *curr_err) {
+                           elka::BasicNavigator *nav) {
   // Error of form [xe,ye,ze,vxe,vye,vze,yawe,vyawe]
   float e[8];
   uint8_t data_len=32,data[32];
   uint16_t base_thrust;
 
-  static math::Vector<12> body_pose_e;
+  math::Vector<12> body_pose_e;
 
-  body_pose_e=curr_err->get_body_pose();
-  base_thrust=curr_err->get_base_thrust(); 
+  body_pose_e=nav->get_body_pose_error();
+  base_thrust=nav->get_base_thrust(); 
 
   // Sending body frame error in mm/rad
   e[0] = (float)(-body_pose_e(1)*1000);

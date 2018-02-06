@@ -132,9 +132,15 @@ struct sensor_stamped_s {
 
 struct pose_stamped_s {
   math::Vector<STATE_LEN>pose;
-  math::Quaternion q;
-  math::Vector<3> eul,body_pos,body_vel;
-  math::Matrix<3,3> rot;
+  // In the case of setpoint, q is desired pose,
+  // q_act is actual pose
+  // In the case of non-setpoint, q is pose rotation
+  math::Quaternion q,q_act; // Actual and desired rotation
+  // In the case of setpoint, eul is desired pose,
+  // eul_act is actual pose
+  // In the case of non-setpoint, eul is pose rotation
+  math::Vector<3> eul,eul_act,body_pos,body_vel,body_axis_rate;
+  math::Matrix<3,3> rot,body_axis2euler_angle_rate;
   math::Vector<3> offset_t;
   math::Matrix<3,3> offset_r;
   hrt_abstime init_time,t[STATE_LEN];
@@ -172,6 +178,8 @@ struct pose_stamped_s {
     if (!initialized) {
       initialized=true;
       init_time=hrt_absolute_time();
+      body_axis2euler_angle_rate.zero();
+      body_axis2euler_angle_rate(0,0)=1;
     }
     if (!hold &&
         init_time+t[0]
@@ -210,6 +218,19 @@ struct pose_stamped_s {
       pose(n)=f;
     }
   }
+  void set_euler_angle_rates(hrt_abstime tau,
+      float rs, float ps, float ys){
+    update_rot();
+    body_axis_rate(0)=rs;
+    body_axis_rate(1)=ps;
+    body_axis_rate(2)=ys;
+    math::Vector<3>euler_angle_rate=
+      body_axis2euler_angle_rate*body_axis_rate;
+    t[10]=t[11]=t[12]=tau;
+    pose(10)=euler_angle_rate(0);
+    pose(11)=euler_angle_rate(1);
+    pose(12)=euler_angle_rate(2);
+  }
   float pos_norm() {
     return sqrtf(pose(1)*pose(1)+pose(2)*pose(2)+pose(3)*pose(3));
   }
@@ -238,9 +259,18 @@ struct pose_stamped_s {
     q(2)=pose(8);
     q(3)=pose(9);
     eul=q.to_euler();
-    rot.from_euler(eul(0),eul(1),eul(2));
+    eul_act=q_act.to_euler();
+    rot.from_euler(eul_act(0),eul_act(1),eul_act(2));
     rot=rot.inversed();
 
+    // Update transformation matrix from euler-angle rates to
+    // body-axis rates
+    body_axis2euler_angle_rate(0,1)=sin(eul(0))*tan(eul(1));
+    body_axis2euler_angle_rate(0,2)=cos(eul(0))*tan(eul(1));
+    body_axis2euler_angle_rate(1,1)=cos(eul(0));
+    body_axis2euler_angle_rate(1,2)=-sin(eul(0));
+    body_axis2euler_angle_rate(2,1)=sin(eul(0))*(1/cos(eul(1)));
+    body_axis2euler_angle_rate(2,1)=cos(eul(0))*(1/cos(eul(1)));
     // Update body position & velocity
     body_pos(0)=pose(0);
     body_pos(1)=pose(1);
@@ -259,6 +289,9 @@ struct pose_stamped_s {
     update_rot();
     return eul;
   }
+  math::Matrix<3,3>get_body_axis2euler_angle_rate(){
+    return body_axis2euler_angle_rate;
+  }
   // For now just do yaw correction
   math::Vector<3>get_body_pose(uint8_t sect) {
     update_rot();
@@ -273,18 +306,32 @@ struct pose_stamped_s {
     } else if (sect==SECT_ANG) {
       return eul;
     } else if (sect==SECT_ANG_RATE) {
-      math::Vector<3> s;
-      s(0)=pose(10);
-      s(1)=pose(11);
-      s(2)=pose(12);
-      return s;
+      return body_axis_rate;
     } else {
       return math::Vector<3>();
     }
   }
 
   math::Vector<12>get_body_pose() {
-    static math::Vector<12> s;
+    math::Vector<12> s;
+    update_rot();
+    s(0)=body_pos(0);
+    s(1)=body_pos(1);
+    s(2)=body_pos(2);
+    s(3)=body_vel(0);
+    s(4)=body_vel(1);
+    s(5)=body_vel(2);
+    s(6)=eul_act(0);
+    s(7)=eul_act(1);
+    s(8)=eul_act(2);
+    s(9)=body_axis_rate(0);
+    s(10)=body_axis_rate(1);
+    s(11)=body_axis_rate(2);
+    return s;
+  }
+
+  math::Vector<12>get_body_pose_error() {
+    math::Vector<12> s;
     update_rot();
     s(0)=body_pos(0);
     s(1)=body_pos(1);
@@ -295,9 +342,9 @@ struct pose_stamped_s {
     s(6)=eul(0);
     s(7)=eul(1);
     s(8)=eul(2);
-    s(9)=pose(10);
-    s(10)=pose(11);
-    s(11)=pose(12);
+    s(9)=body_axis_rate(0);
+    s(10)=body_axis_rate(1);
+    s(11)=body_axis_rate(2);
     return s;
   }
 
@@ -327,6 +374,9 @@ public:
   void set_pose(hrt_abstime t[STATE_LEN],math::Vector<STATE_LEN>*v);
   void set_pose(pose_stamped_s *p);
   void set_pose(uint8_t n, hrt_abstime t, float f);
+  void set_euler_angle_rates(hrt_abstime tau,
+      float rs, float ps, float ys);
+  math::Matrix<3,3>get_body_axis2euler_angle_rate();
   void update_prev_pose();
   void update_prev_pose(uint8_t n);
 

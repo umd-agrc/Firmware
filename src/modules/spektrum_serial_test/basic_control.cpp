@@ -39,8 +39,8 @@ int8_t elka::BasicController::start() {
     daemon_task_ = px4_task_spawn_cmd(
       thread_name,
       SCHED_DEFAULT,
-      SCHED_PRIORITY_DEFAULT,
-      2400,
+      SCHED_PRIORITY_DEFAULT+30,
+      2000,
       run_controller,
       NULL);
 

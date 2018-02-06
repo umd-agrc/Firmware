@@ -16,10 +16,10 @@
 #include "basic_estimator.h"
 
 // Defines close enough to setpoint position in meters
-#define POSITION_EPSILON 0.05
-#define VELOCITY_EPSILON 0.01
-#define ANGLE_EPSILON 0.02
-#define ANGLE_RATE_EPSILON 0.02
+#define POSITION_EPSILON 0.1
+#define VELOCITY_EPSILON 0.1
+#define ANGLE_EPSILON 0.05
+#define ANGLE_RATE_EPSILON 0.05
 #define POSITION_MAX 5
 #define VELOCITY_MAX 3
 #define ANGLE_MAX 21
@@ -142,6 +142,7 @@ private:
 	// to snapdragon
   math::Matrix<3,3> _elka_sf_r;
   math::Vector<3> _elka_sf_t;
+  math::Vector<12> _body_pose_error;
 
 public:
   BasicNavigator();
@@ -167,11 +168,17 @@ public:
   void set_err(hrt_abstime t[STATE_LEN],math::Vector<STATE_LEN>*v);
   void set_err(pose_stamped_s *p);
 
+  math::Vector<12> get_body_pose_error();
+  uint16_t get_base_thrust() {
+    return _curr_err.get_base_thrust();
+  } 
+
   // Update poses and stores position/velocity in ELKA body frame
   // Corrects for Snapdragon<->ELKA offset
   // If current setpoint expired, sets next setpoint
   void update_pose(vehicle_local_position_s *p,
-                   vehicle_attitude_s *a);
+                   vehicle_attitude_s *a,
+                   vision_velocity_s *v);
 	// Clear setpoints 
   void add_setpoint(
       hrt_abstime t,
