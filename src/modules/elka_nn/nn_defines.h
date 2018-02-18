@@ -10,7 +10,7 @@
 // Test whether *p is not NUL and not whitespace
 #define WANT(p) *p && !isspace(*p)
 
-#define ELKA_DIR "/dev/fs/.elka/"
+#define ELKA_DIR "/home/linaro/.elka/"
 #define FLIGHT_PLAN_DIR "flight_plan/"
 
 #define NUM_JOYSTICK_CHANNELS 4
@@ -50,7 +50,7 @@
 #define MSG_TYPE_THRUST 6
 #define MSG_TYPE_GAINS 7
 #define MSG_TYPE_TEST 8
-//FIXME ELKA chip side change msg_type back to uint8 from int16
+//FIXME ELKA chip side change  msg_type back to uint8 from int16
 #define MSG_TYPE_ERROR 9 
 #define MSG_TYPE_MOTOR_INPUTS 10
 #define MSG_TYPE_PLAN_ELEMENT 11
@@ -69,7 +69,7 @@
 //#define DEBUG_CONTROLLER 1
 //#define DEBUG_SERIAL_READ 1
 //#define DEBUG_MGR_PARSE 1
-#define DEBUG_POSE 1
+//#define DEBUG_POSE 1
 //#define DEBUG_VISION_VELOCITY 1
 //#define DEBUG_FILTER 1
 //#define DEBUG_SPEKTRUM 1
@@ -118,11 +118,10 @@
 #define VERTICAL_MAX_SPEED (-3.0f) // m/s
 #define HORIZONTAL_DEFAULT_SPEED 1.0f // m/s
 #define HORIZONTAL_MAX_SPEED 3.0f // m/s
-#define PLAN_ELEMENT_DEFAULT_LEN 5.0f*HRT_ABSTIME_TO_SEC // Seconds
-#define SETPOINT_DEFAULT_LEN 5.0f*HRT_ABSTIME_TO_SEC // Seconds
-#define LANDING_SETPOINT_DEFAULT_LEN 1.5f*HRT_ABSTIME_TO_SEC // Seconds
-#define TAKEOFF_SETPOINT_DEFAULT_LEN 0.3f*HRT_ABSTIME_TO_SEC // Seconds
+#define PLAN_ELEMENT_DEFAULT_LEN 5.0*HRT_ABSTIME_TO_SEC // Seconds
+#define SETPOINT_DEFAULT_LEN 5.0*HRT_ABSTIME_TO_SEC // Seconds
+#define LANDING_SETPOINT_DEFAULT_LEN 1.5*HRT_ABSTIME_TO_SEC // Seconds
+#define TAKEOFF_SETPOINT_DEFAULT_LEN 0.3*HRT_ABSTIME_TO_SEC // Seconds
 #define SETPOINT_FUNCTION_ORDER 5
 
 #define SETPOINT_PARAM_HOLD 0x01
-#define SETPOINT_PARAM_LAND 0x02

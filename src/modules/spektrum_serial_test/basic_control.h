@@ -8,6 +8,7 @@
 #include <px4_posix.h>
 #include <px4_tasks.h>
 #include <px4_time.h>
+#include <uORB/topics/elka_msg.h>
 
 #include "serial_defines.h"
 #include "basic_navigator.h"
@@ -62,7 +63,7 @@ public:
   static BasicController *instance();
 
   BasicNavigator *get_navigator() {return &_nav;};
-  int8_t parse_plan_file(const char *plan_file);
+	int8_t parse_plan_element(uint8_t element_type,hrt_abstime t);
   //TODO Clear setpoints from plan_element
   //     For now just reset setpoints
   void erase_plan_element(

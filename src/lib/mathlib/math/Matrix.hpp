@@ -437,6 +437,28 @@ public:
 		Vector<M> res(Product.data());
 		return res;
 	}
+
+  /**
+   * get matrix row
+   */
+  Vector<N> get_row(const int r)
+  {
+    Vector<N> res(this->data[r]);
+		return res;
+  }
+
+  /**
+   * get matrix column
+   */
+  Vector<M> get_col(const int c)
+  {
+    float col[M];
+    for (uint32_t i=1; i<M;i++) {
+      col[i]=this->data[i][c];
+    }
+    Vector<M> res(col);
+    return col;
+  }
 };
 
 template <>

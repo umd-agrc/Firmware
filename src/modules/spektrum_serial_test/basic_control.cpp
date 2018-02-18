@@ -10,7 +10,9 @@
 static bool thread_running_,thread_should_exit_;
 static int daemon_task_;
 struct hrt_call	print_state_call_;
+#if defined(ELKA_DEBUG) && defined(DEBUG_NAVIGATOR)
 static int print_state_call_interval_;
+#endif
 
 void print_state(void *arg);
 
@@ -32,7 +34,6 @@ elka::BasicController::BasicController() {
 
 int8_t elka::BasicController::start() {
   if (!thread_running_) {
-    usleep(400000);
     char thread_name[256];
     sprintf(thread_name,"elka_controller");
     thread_should_exit_ = false;
@@ -80,68 +81,10 @@ int8_t elka::BasicController::exit() {
   return ELKA_SUCCESS;
 }
 
-int8_t elka::BasicController::parse_plan_file(const char *plan_file) {
-  FILE *f=nullptr;
-	char plan_file_path[143]="\0", *plan_fp;
-  strcat(plan_file_path,ELKA_DIR);
-  strcat(plan_file_path,FLIGHT_PLAN_DIR);
-  strcat(plan_file_path,plan_file);
-	plan_fp=trim_path(plan_file_path);
-  PX4_INFO("Reading plan file path: %s",plan_fp);
-  if (file_exists(plan_fp)) {
-    f=fopen(plan_fp,"r");
-  } else {
-    PX4_WARN("plan file doesn't exist!");
-    return PARSE_ERROR;
-  }
-
-  //TODO parse file
-  char line[128],*line_ptr,phrase[10][20];
-  uint8_t j=0,k=0;
-  while (fgets(line,sizeof(line),f)!=NULL) {
-    j=0;k=0;
-    line_ptr=line;
-    while (*line_ptr) {
-      SKIP(line_ptr);
-			if (WANT(line_ptr)) {
-				while (WANT(line_ptr)) {
-					phrase[j][k]=*line_ptr;
-					line_ptr++;
-					k++;
-				}
-				phrase[j][k]=0;
-				j++;
-			}
-    }
-    
-    // Parse phrase read into _plan
-    for (k=0;k<j;k++) {
-      if (!strcmp(phrase[k],"calibrate")) {
-        _plan.insert(new PlanElement(PLAN_ELEMENT_CALIBRATE,
-					PLAN_ELEMENT_DEFAULT_LEN));
-      } else if (!strcmp(phrase[k],"check")) {
-        _plan.insert(new PlanElement(PLAN_ELEMENT_CHECK,
-					PLAN_ELEMENT_DEFAULT_LEN));
-      } else if (!strcmp(phrase[k],"takeoff")) {
-        _plan.insert(new PlanElement(PLAN_ELEMENT_TAKEOFF,
-					3*PLAN_ELEMENT_DEFAULT_LEN));
-      } else if (!strcmp(phrase[k],"land")) {
-        _plan.insert(new PlanElement(PLAN_ELEMENT_LAND,
-					PLAN_ELEMENT_DEFAULT_LEN));
-      } else if (!strcmp(phrase[k],"hover")) {
-#if defined(ELKA_DEBUG) && defined(DEBUG_HOVER_HOLD)
-        _plan.insert(new PlanElement(PLAN_ELEMENT_HOVER,
-					100*PLAN_ELEMENT_DEFAULT_LEN));
-#else
-        _plan.insert(new PlanElement(PLAN_ELEMENT_HOVER,
-					PLAN_ELEMENT_DEFAULT_LEN));
-#endif
-      } else {
-        PX4_WARN("Unrecognized plan word %s",phrase[k]);
-      }
-    }
-  }
-	print_plan();
+// Assumes well-formatted message
+int8_t elka::BasicController::parse_plan_element(uint8_t element_type,
+	hrt_abstime t) {
+	_plan.insert(new PlanElement(element_type,t));
   return ELKA_SUCCESS;
 }
 
@@ -234,22 +177,24 @@ void elka::BasicController::print_state() {
 }
 
 int run_controller(int argc, char **argv) {
-  usleep(200000);
   elka::BasicController *ctl=elka::BasicController::instance();
   thread_running_=true;
   thread_should_exit_=false;
+  ctl->msgr_idx=0;
 
+#if defined(ELKA_DEBUG) && defined(DEBUG_NAVIGATOR)
   print_state_call_interval_=450000; // us
   hrt_call_every(&print_state_call_, 0,
            (print_state_call_interval_),
            (hrt_callout)&print_state,
            (void *)ctl);
+#endif
 
 	while(!thread_should_exit_) {
 		ctl->execute_plan();
 		ctl->set_msg();
 		ctl->parse_msg();
-		usleep(25000);
+		usleep(20000);
 	}
   thread_running_=false;
   return ELKA_SUCCESS;

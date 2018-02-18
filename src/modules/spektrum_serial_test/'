@@ -151,15 +151,15 @@ void elka::BasicNavigator::update_pose(vehicle_local_position_s *p,
         vx=v->vx,
         vy=v->vy,
         vz=v->vz;
-  math::Vector<3>inert_pos,inert_vel,
+  static math::Vector<3>inert_pos,inert_vel,
     body_axis_rate_curr,
     inertial_angle_rate_curr,
     sf_elka_t_curr,
     sf_elka_radii,
     sf_elka_inert_rot,
     eul;
-  math::Matrix<3,3>sf_rot;
-  math::Quaternion q;
+  static math::Matrix<3,3>sf_rot;
+  static math::Quaternion q;
   _est.update_prev_pose();
 
   // Update angles and angle rates
@@ -167,10 +167,12 @@ void elka::BasicNavigator::update_pose(vehicle_local_position_s *p,
   // euler-angle rates can be performed wrt most recent orientation
   //TODO make this neater
   q=math::Quaternion(a->q);
+  /*
   eul=q.to_euler();
   sf_rot.from_euler(eul(0),eul(1),eul(2));
   eul=(_elka_sf_r*sf_rot).to_euler();
   q.from_euler(eul(0),eul(1),eul(2));
+  */
   _est.set_pose(6,t_a,q(0));
   _est.set_pose(7,t_a,q(1));
   _est.set_pose(8,t_a,q(2));
@@ -247,9 +249,9 @@ void elka::BasicNavigator::update_pose(vehicle_local_position_s *p,
       *inertial_angle_rate_curr(1);
 
 #if defined(ELKA_DEBUG) && defined(DEBUG_TRANSFORM)
-  math::Vector<3>euler=_est.get_pose()->get_eul();
+  math::Vector<3>eul=_est.get_body_pose(SECT_ANG);
   PX4_INFO("euler angles: %3.3f,%3.3f,%3.3f",
-      euler(0),euler(1),euler(2));
+      eul(0),eul(1),eul(2));
   /*
   PX4_INFO("body axis rates: %3.3f,%3.3f,%3.3f",
            body_axis_rate_curr(0),body_axis_rate_curr(1),
@@ -355,7 +357,7 @@ uint8_t elka::BasicNavigator::takeoff(float z,bool hold) {
       tmp(5)=0;
     }
 #if defined(ELKA_DEBUG) && defined(DEBUG_GAINS)
-    add_setpoint(t,param_mask,&tmp,TEST_DEFAULT_THRUST);
+  add_setpoint(t,param_mask,&tmp,TEST_DEFAULT_THRUST);
 #else
     add_setpoint(t,param_mask,&tmp,HOVER_DEFAULT_THRUST);
 #endif
@@ -457,13 +459,8 @@ bool elka::BasicNavigator::at_setpoint() {
 //FIXME Should we still be correcting angle error like this?
 //      Velocity error should scale with position error
 void elka::BasicNavigator::update_error(pose_stamped_s *curr_setpoint) {
-  math::Vector<3>eul_err;
   if (curr_setpoint) {
     _curr_err.pose=curr_setpoint->pose-_est.get_pose()->pose;
-    // Avoid quaternion error when current pose is at +/-PI
-    // Subtract Euler angles
-    eul_err=curr_setpoint->get_eul()-_est.get_pose()->get_eul();
-    _curr_err.set_eul(eul_err);
     _curr_err.base_thrust=curr_setpoint->base_thrust;
   } else {
     _curr_err.pose.zero();
@@ -471,19 +468,9 @@ void elka::BasicNavigator::update_error(pose_stamped_s *curr_setpoint) {
     _wait=true;
   }
 #if defined(ELKA_DEBUG) && defined(DEBUG_TRANSFORM_ERROR)
-  math::Vector<3> err_ang=_curr_err.get_body_pose(SECT_ANG);
-  PX4_INFO("err yaw: %3.3f",err_ang(2));
-  /*
-  PX4_INFO("pose ang: %3.3f,%3.3f,%3.3f",
-      pose_ang(0),pose_ang(1),pose_ang(2));
-  PX4_INFO("sp ang: %3.3f,%3.3f,%3.3f",
-      sp_ang(0),sp_ang(1),sp_ang(2));
-      */
-  /*
-  PX4_INFO("curr_err_q: %3.3f,%3.3f,%3.3f,%3.3f",
-      _curr_err.pose(6),_curr_err.pose(7),_curr_err.pose(8),
-      _curr_err.pose(9));
-      */
+  math::Vector<3> body_axis_rates=_curr_err.get_body_pose(SECT_POS);
+  PX4_INFO("curr_err_ang: %3.3f,%3.3f,%3.3f",
+      body_axis_rates(0),body_axis_rates(1),body_axis_rates(2));
   /*
   PX4_INFO("curr_err_pos: %3.3f,%3.3f,%3.3f",
       _curr_err.pose(0),_curr_err.pose(1),_curr_err.pose(2));

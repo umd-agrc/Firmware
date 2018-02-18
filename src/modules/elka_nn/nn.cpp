@@ -8,12 +8,18 @@
 #include <stdlib.h>
 #include <string>
 #include <cstring>
+#include <vector>
+#include <utility>
 
+#include <drivers/drv_hrt.h>
 #include <uORB/uORB.h>
 #include <uORB/topics/nn_in.h>
 #include <uORB/topics/nn_out.h>
+#include <uORB/topics/elka_msg.h>
 #include <lib/mathlib/math/Vector.hpp>
 
+#include "nn_defines.h"
+#include "nn_utils.h"
 #include "genann.h"
 
 extern "C" { __EXPORT int nn_main(int argc, char *argv[]); }
@@ -25,21 +31,15 @@ static genann *nn_ctl_;
 
 void usage();
 int nn_loop(int argc, char **argv);
+int8_t parse_plan_file(
+	std::vector<std::pair<uint8_t,hrt_abstime>>*plan,const char *plan_file);
 
 void usage() {
-  PX4_WARN("usage: elka_nn <start | stop | status>");
-}
-
-inline bool file_exists(const char *s) {
-  FILE *f;
-  if ((f=fopen(s,"r"))!=NULL) {
-    fclose(f);
-    return true;
-  } else return false;
+  PX4_WARN("usage: nn <start | stop | status>");
 }
 
 int nn_main(int argc, char *argv[]) {
-	if (argc < 3) {
+	if (argc < 2) {
 		PX4_WARN("Missing action.");
     usage();
     return PX4_OK;
@@ -55,7 +55,7 @@ int nn_main(int argc, char *argv[]) {
         thread_name,
         SCHED_DEFAULT,
         SCHED_PRIORITY_DEFAULT,
-        1000,
+        2000,
         nn_loop,
         &argv[2]);
 
@@ -108,12 +108,36 @@ int nn_main(int argc, char *argv[]) {
 }
 
 int nn_loop(int argc, char **argv) {
+	thread_running_=true;
   nn_in_s nn_ctl_in;
   nn_out_s nn_ctl_out;
-
+  elka_msg_s elka_posix;
+	std::vector<std::pair<uint8_t,hrt_abstime>> flight_plan;
+	
+	memset(&elka_posix,0,sizeof(elka_posix));
   memset(&nn_ctl_in,0,sizeof(nn_ctl_in));
   memset(&nn_ctl_out,0,sizeof(nn_ctl_out));
 
+  //Read in and publish plan file
+	char plan_file[66]="test_takeoff.plan";
+
+	orb_advert_t elka_posix_pub=orb_advertise(ORB_ID(elka_msg), &elka_posix);
+	// Sleep for one second before publishing plan file
+	usleep(1000000);
+
+	write_elka_msg_header(&elka_posix,9,MSG_TYPE_PLAN_ELEMENT);
+  parse_plan_file(&flight_plan,plan_file);
+	for (auto it=flight_plan.begin();it!=flight_plan.end();it++) {
+		elka_posix.data[ELKA_MSG_DATA_OFFSET]=it->first;
+		serialize(&elka_posix.data[ELKA_MSG_DATA_OFFSET+1],
+			&it->second,8);
+		orb_publish(ORB_ID(elka_msg), elka_posix_pub, &elka_posix);
+		// Sleep so that DSP side can receive messages w/o missing any
+		// DSP receives elka_msg at 30Hz
+		usleep(200000);
+	}
+
+  /*
   if (!file_exists(*argv)) {
     PX4_WARN("Unable to open nn ctl file");
     if (!(nn_ctl_=genann_init(27,1,15,12))) {
@@ -125,6 +149,7 @@ int nn_loop(int argc, char **argv) {
     nn_ctl_=genann_read(f);
     fclose(f);
   }
+  */
 
   // Define poll_return for defined file descriptors
   int poll_ret;
@@ -146,7 +171,7 @@ int nn_loop(int argc, char **argv) {
     // Handle the poll result
     if (poll_ret == 0) {
       // None of our providers is giving us data
-      PX4_ERR("Got no data");
+      //PX4_ERR("Got no data");
     } else if (poll_ret < 0) {
       // Should be an emergency
       if (error_counter < 10 || error_counter % 50 == 0) {
@@ -169,9 +194,81 @@ int nn_loop(int argc, char **argv) {
         }
       }
     }
+    usleep(50000);
   }
 
   genann_free(nn_ctl_);
 
   return PX4_OK;
+}
+
+int8_t parse_plan_file(
+	std::vector<std::pair<uint8_t,hrt_abstime>>*plan,const char *plan_file) {
+  FILE *f=nullptr;
+	uint8_t plan_element_type;
+
+	char plan_file_path[143]="\0", *plan_fp;
+
+  strcat(plan_file_path,ELKA_DIR);
+  strcat(plan_file_path,FLIGHT_PLAN_DIR);
+  strcat(plan_file_path,plan_file);
+	plan_fp=trim_path(plan_file_path);
+  PX4_INFO("Reading plan file path: %s",plan_fp);
+  if (file_exists(plan_fp)) {
+    f=fopen(plan_fp,"r");
+  } else {
+    PX4_WARN("plan file doesn't exist!");
+    return PARSE_ERROR;
+  }
+
+  //TODO parse file
+  char line[128],*line_ptr,phrase[10][20];
+  uint8_t j=0,k=0;
+	hrt_abstime dt;
+  while (fgets(line,sizeof(line),f)!=NULL) {
+    j=0;k=0;
+    line_ptr=line;
+    while (*line_ptr) {
+      SKIP(line_ptr);
+			if (WANT(line_ptr)) {
+				while (WANT(line_ptr)) {
+					phrase[j][k]=*line_ptr;
+					line_ptr++;
+					k++;
+				}
+				phrase[j][k]=0;
+				j++;
+			}
+    }
+    
+    // Parse phrase read into plan
+    for (k=0;k<j;k++) {
+      if (!strcmp(phrase[k],"calibrate")) {
+				plan_element_type=PLAN_ELEMENT_CALIBRATE;
+				dt=PLAN_ELEMENT_DEFAULT_LEN;
+      } else if (!strcmp(phrase[k],"check")) {
+				plan_element_type=PLAN_ELEMENT_CHECK;
+				dt=PLAN_ELEMENT_DEFAULT_LEN;
+      } else if (!strcmp(phrase[k],"takeoff")) {
+				plan_element_type=PLAN_ELEMENT_TAKEOFF;
+				dt=3*PLAN_ELEMENT_DEFAULT_LEN;
+      } else if (!strcmp(phrase[k],"land")) {
+				plan_element_type=PLAN_ELEMENT_LAND;
+				dt=PLAN_ELEMENT_DEFAULT_LEN;
+      } else if (!strcmp(phrase[k],"hover")) {
+				plan_element_type=PLAN_ELEMENT_HOVER;
+#if defined(ELKA_DEBUG) && defined(DEBUG_HOVER_HOLD)
+				dt=100*PLAN_ELEMENT_DEFAULT_LEN;
+#else
+				dt=PLAN_ELEMENT_DEFAULT_LEN;
+#endif
+      } else {
+        PX4_WARN("Unrecognized plan word %s",phrase[k]);
+      }
+
+			plan->push_back(
+				std::pair<uint8_t,hrt_abstime>(plan_element_type,dt));
+    }
+  }
+  return ELKA_SUCCESS;
 }

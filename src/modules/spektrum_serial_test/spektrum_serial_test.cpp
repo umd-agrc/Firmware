@@ -48,7 +48,7 @@ int spektrum_serial_test_main(int argc, char *argv[]) {
         thread_name,
         SCHED_DEFAULT,
         SCHED_PRIORITY_DEFAULT,
-        1800,
+        2000,
         spektrum_test_loop,
         &argv[2]);
 
@@ -114,10 +114,15 @@ int spektrum_test_loop(int argc, char *argv[]) {
   // Create controller and get pointer copy of navigator
   elka::BasicController *ctl=elka::BasicController::instance();
   ctl->add_messenger(elka_msgr_d);
+  usleep(200000);
+  //FIXME make a small program to run on krait-side at startup to parse plan
+  //file
+  /*
   if (ctl->parse_plan_file(argv[0])) {
     PX4_ERR("Failed to parse plan file %s",argv[0]);
     return PX4_ERROR;
   }
+  */
   if (ctl->start()!=ELKA_SUCCESS) {
     PX4_ERR("Failed to start controller");
     return PX4_ERROR;
@@ -127,11 +132,13 @@ int spektrum_test_loop(int argc, char *argv[]) {
   // Define poll_return for defined file descriptors
   int poll_ret;
 
+	hrt_abstime plan_element_dt;
+
   input_rc_s input_rc, input_rc_trim;
   vehicle_local_position_s vision_pos;
   vehicle_attitude_s vision_att;
   vision_velocity_s vision_vel;
-  elka_msg_s elka_out;
+  elka_msg_s elka_out,elka_posix;
   elka_packet_s elka_pkt;
   nn_in_s nn_ctl_in;
   nn_out_s nn_ctl_out;
@@ -142,6 +149,7 @@ int spektrum_test_loop(int argc, char *argv[]) {
   memset(&vision_att,0,sizeof(vision_att));
   memset(&vision_vel,0,sizeof(vision_vel));
   memset(&elka_out,0,sizeof(elka_out));
+  memset(&elka_posix,0,sizeof(elka_posix));
   memset(&elka_pkt,0,sizeof(elka_pkt));
   memset(&nn_ctl_in,0,sizeof(nn_ctl_in));
   memset(&nn_ctl_out,0,sizeof(nn_ctl_out));
@@ -150,16 +158,18 @@ int spektrum_test_loop(int argc, char *argv[]) {
   // Vision position omes from MAVLink SLAM pose estimate
   // Local position comes from LPE BlockLocalPositionEstimator
   int input_rc_sub_fd = orb_subscribe(ORB_ID(input_rc));
+  int elka_posix_sub_fd = orb_subscribe(ORB_ID(elka_msg));
   int vision_pos_sub_fd = orb_subscribe(ORB_ID(vehicle_vision_position));
   int vision_att_sub_fd = orb_subscribe(ORB_ID(vehicle_vision_attitude));
   int vision_vel_sub_fd = orb_subscribe(ORB_ID(vision_velocity));
   int nn_ctl_out_sub_fd = orb_subscribe(ORB_ID(nn_out));
 
-  // Set update rate to 100Hz
+  // Set update rates
   orb_set_interval(input_rc_sub_fd, 10);
-  orb_set_interval(vision_pos_sub_fd, 10);
-  orb_set_interval(vision_att_sub_fd, 10);
-  orb_set_interval(vision_vel_sub_fd, 10);
+  orb_set_interval(vision_pos_sub_fd, 30);
+  orb_set_interval(vision_att_sub_fd, 30);
+  orb_set_interval(vision_vel_sub_fd, 30);
+  orb_set_interval(elka_posix_sub_fd, 30);
 
   px4_pollfd_struct_t fds[] = {
     {.fd = input_rc_sub_fd, .events = POLLIN},
@@ -167,13 +177,14 @@ int spektrum_test_loop(int argc, char *argv[]) {
     {.fd = vision_att_sub_fd, .events = POLLIN},
     {.fd = vision_vel_sub_fd, .events = POLLIN},
     {.fd = nn_ctl_out_sub_fd, .events = POLLIN},
+    {.fd = elka_posix_sub_fd, .events = POLLIN},
   };
 
   // Set old message duration to 1/10 s
   set_old_msg_duration(100000);
   _prev_state_update = hrt_absolute_time();
   // Serial state call interval in hz
-  _serial_state_call_interval = 1000;
+  _serial_state_call_interval = 500;
   hrt_call_every(&_serial_state_call, 0,
            (_serial_state_call_interval),
            (hrt_callout)&serial_state_timeout_check,
@@ -242,6 +253,23 @@ int spektrum_test_loop(int argc, char *argv[]) {
             nn_ctl_out_sub_fd,
             &nn_ctl_out);
         //TODO pack and send nn_ctl_out
+      }
+      
+      if (fds[5].revents & POLLIN) {
+        orb_copy(ORB_ID(elka_msg),
+            elka_posix_sub_fd,
+            &elka_posix);
+
+        if (check_msg_header(elka_posix.data)==ELKA_SUCCESS) {
+          if (elka_posix.data[ELKA_MSG_TYPE] == MSG_TYPE_PLAN_ELEMENT) {
+						deserialize(
+							&plan_element_dt,&elka_posix.data[ELKA_MSG_DATA_OFFSET+1],8);
+            ctl->parse_plan_element(elka_posix.data[ELKA_MSG_DATA_OFFSET],
+							plan_element_dt);
+						PX4_INFO("Received plan element: %d,%" PRIu64 "",
+							elka_posix.data[ELKA_MSG_DATA_OFFSET],plan_element_dt);
+					}
+        }
       }
 
       nav->update_pose(&vision_pos,&vision_att,&vision_vel);
@@ -344,7 +372,7 @@ int pack_position_estimate(elka_packet_s *snd,
                            elka::BasicNavigator *nav) {
   // Error of form [xe,ye,ze,vxe,vye,vze,yawe,vyawe]
   float e[8];
-  uint8_t data_len=32,data[32];
+  uint8_t data_len=34,data[34];
   uint16_t base_thrust;
 
   math::Vector<12> body_pose_e;
@@ -354,14 +382,13 @@ int pack_position_estimate(elka_packet_s *snd,
 
   // Sending body frame error in mm/rad
   e[0] = (float)(-body_pose_e(1)*1000);
-  e[1] = (float)(-body_pose_e(0)*1000);
+  e[1] = (float)(body_pose_e(0)*1000);
   e[2] = (float)(body_pose_e(2)*1000);
   e[3] = (float)(-body_pose_e(4)*1000);
-  e[4] = (float)(-body_pose_e(3)*1000);
+  e[4] = (float)(body_pose_e(3)*1000);
   e[5] = (float)(body_pose_e(5)*1000);
-  //TODO fix temp yaw correction
-  e[6] = (float)body_pose_e(8)-M_PI_2_F; 
-  e[7] = (float)body_pose_e(11);
+  e[6] = (float)-body_pose_e(8); 
+  e[7] = (float)-body_pose_e(11);
 
   // Set error to zero if within error band
   if (fabs(e[0])<POSITION_EPSILON*1000) e[0]=0;
@@ -376,20 +403,24 @@ int pack_position_estimate(elka_packet_s *snd,
   else if (fabs(e[4])>VELOCITY_MAX*1000) e[4]=0;
   if (fabs(e[5])<VELOCITY_EPSILON*1000) e[5]=0;
   else if (fabs(e[5])>VELOCITY_MAX*1000) e[5]=0;
-  if (fabs(e[6])<ANGLE_EPSILON*1000) e[6]=0;
-  else if (fabs(e[6])>ANGLE_MAX*1000) e[6]=0;
-  if (fabs(e[7])<ANGLE_RATE_EPSILON*1000) e[7]=0;
-  else if (fabs(e[7])>ANGLE_RATE_MAX*1000) e[7]=0;
+  if (fabs(e[6])<ANGLE_EPSILON) e[6]=0;
+  else if (fabs(e[6])>ANGLE_MAX) e[6]=0;
+  if (fabs(e[7])<ANGLE_RATE_EPSILON) e[7]=0;
+  else if (fabs(e[7])>ANGLE_RATE_MAX) e[7]=0;
 
 #if defined(ELKA_DEBUG) && defined(DEBUG_POSE)
   PX4_INFO("t: %" PRIu16 " xe: %f ye: %f ze: %f\n\
 vxe: %f vye: %f vze: %f\n\
 yawe: %f vyawe: %f",
     base_thrust,e[0],e[1],e[2],e[3],e[4],e[5],e[6],e[7]);
+  /*
+  PX4_INFO("xe: %f, ye: %f, yawe: %f, vyawe: %f",
+      e[0],e[1],e[6],e[7]);
+    */
 #endif
 
   serialize(&(data[0]),&base_thrust,2);
-  serialize(&(data[2]),&e,8*sizeof(float));
+  serialize(&(data[2]),&e,32);
 
   return append_pkt(
           snd,

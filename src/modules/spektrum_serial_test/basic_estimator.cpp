@@ -74,16 +74,6 @@ void elka::BasicEstimator::set_pose(uint8_t n,
   }
 }
 
-void elka::BasicEstimator::set_euler_angle_rates(hrt_abstime tau,
-    float rs, float ps, float ys) {
-  update_prev_pose();
-  _curr_pose.set_euler_angle_rates(tau,rs,ps,ys);
-}
-
-math::Matrix<3,3>elka::BasicEstimator::get_body_axis2euler_angle_rate() {
-  return _curr_pose.get_body_axis2euler_angle_rate();
-}
-
 void elka::BasicEstimator::update_prev_pose() {
   _prev_pose.set_pose(&_curr_pose);
 }
