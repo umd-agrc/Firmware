@@ -3,7 +3,6 @@
 #include <cstdlib>
 #include <string.h>
 #include <istream>
-#include <uORB/topics/elka_msg.h>
 
 #include "basic_control.h"
 
@@ -88,6 +87,13 @@ int8_t elka::BasicController::parse_plan_element(uint8_t element_type,
   return ELKA_SUCCESS;
 }
 
+/*
+int8_t elka::BasicController::parse_plan_element(plan_element_params_s* el) {
+  _plan.insert(new PlanElement(el));
+  return ELKA_SUCCESS;
+}
+*/
+
 int8_t elka::BasicController::execute_plan() {
   static std::set<PlanElement *,plan_element_cmp>::iterator it;
   uint8_t ret=ELKA_SUCCESS;
@@ -112,6 +118,9 @@ int8_t elka::BasicController::execute_plan() {
       break;
     case PLAN_ELEMENT_TAKEOFF:
       ret=_nav.takeoff(HOVER_DEFAULT_HEIGHT,true);
+      break;
+    case PLAN_ELEMENT_TRAJECTORY:
+      //ret=_nav.trajectory(&(*it)->_params);
       break;
     case PLAN_ELEMENT_LAND:
       ret=_nav.land(false);

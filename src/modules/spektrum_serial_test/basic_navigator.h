@@ -8,6 +8,7 @@
 #include <map>
 #include <drivers/drv_hrt.h>
 #include <lib/mathlib/math/Vector.hpp>
+#include <uORB/topics/plan_element_params.h>
 #include <uORB/topics/vehicle_local_position.h>
 #include <uORB/topics/vehicle_attitude.h>
 #include <uORB/topics/vision_velocity.h>
@@ -16,11 +17,13 @@
 #include "basic_estimator.h"
 
 // Defines close enough to setpoint position in meters
-#define POSITION_EPSILON 0.15
-#define VELOCITY_EPSILON 0.15
+#define POSITION_EPSILON 0.04
+#define ALTITUDE_EPSILON 0.04
+#define VELOCITY_EPSILON 0.04
 #define ANGLE_EPSILON 0.07
 #define ANGLE_RATE_EPSILON 0.05
 #define POSITION_MAX 5
+#define ALTITUDE_MAX 2
 #define VELOCITY_MAX 3
 #define ANGLE_MAX 21
 #define ANGLE_RATE_MAX 21
@@ -38,9 +41,6 @@
 #define LANDING_HEIGHT_EPSILON 0.1
 
 #define POSITION_LEN 5
-// Don't neet derivative values in setpoints.
-// These can be derived from interpolating spline
-#define SETPOINT_MAP_LEN 4 // x,y,z,yaw
 
 #define SETPOINT_X 'x'
 #define SETPOINT_Y 'y'
@@ -62,6 +62,7 @@ struct setpoint_s {
   hrt_abstime _dt,_dt_tot,_start;
   uint16_t _base_thrust;
   bool _init,_timeout,_hold,_land;
+  setpoint_s() {}
   setpoint_s(
       hrt_abstime dt,
       math::Vector<SETPOINT_MAP_LEN> &start_pos,
@@ -161,26 +162,30 @@ struct setpoint_s {
 // For midpoints use forward & backward derivative formula:
 //    f'(x)=(f(x+h1)-f(x-h2))/(h1+h2)
 // Note that this does not assume equal spacing between points
-/*
-std::vector<math::Vector<N>> deriv(
-    std::vector<math::Vector<N>> v,hrt_abstime dt) {
-  std::vector<math::Vector<N>> dv;
-  uint8_t i=0,sz=v.size();
+template <unsigned int N>
+void deriv(
+    std::vector<math::Vector<N>>* v,
+    std::vector<math::Vector<N>>* dv,
+    hrt_abstime dt) {
+  uint8_t i=0;
   float dv_pt[N];
-  for (auto it=v.begin(); it!=v.end(); it++) {
+  math::Vector<N> y2,y1;
+  for (auto it=v->rend(); it!=v->rbegin(); it++) {
+    if (i==0) {
+      y2 = *(it+1); y1 = *it;
+    } else if (i==N-1) {
+      y2 = *it; y1 = *(it-1);
+    } else {
+      y2 = *(it+1); y1 = *(it-1);
+      dt*=2;
+    }
     for (uint8_t j=0; j<N; j++) {
-      if (i==0) {
-        dv_pt[j]=(*(it+1)(j)-*(it)(j))/dt;
-      } else if (i==N-1) {
-        dv_pt[j]=(*(it)(j)-*(it-1)(j))/dt;
-      } else {
-        dv_pt[j]=(*(it+1)(j)-*(it-1)(j))/dt;
-      }
+      dv_pt[j]=(y2(j)-y1(j))/dt;
     }
     i++;
+    dv->push_back(math::Vector<N>(dv_pt));
   }
 }
-*/
 
 // PlanElement includes type and 3D 
 // Not every PlanElement includes 3D
@@ -193,7 +198,9 @@ std::vector<math::Vector<N>> deriv(
 //  hover : remain at altitude with level attitude
 struct elka::PlanElement {
   std::vector<math::Vector<POSITION_LEN>> _positions;
-  hrt_abstime _dt,_start,_init_time;
+  std::map<uint8_t,plan_element_params> _param_map;
+  plan_element_params _params;
+  hrt_abstime _dt, _start,_init_time;
   uint8_t _type; 
   bool _begun,_completed,_timeout;
 
@@ -205,6 +212,32 @@ struct elka::PlanElement {
     : _positions(v),_dt(time),_type(t),_begun(false),
 			_completed(false)
 		{_init_time=hrt_absolute_time();}
+  PlanElement(plan_element_params_s* p)
+    : _begun(false),_completed(false)
+  {
+    _params.type=p->type;
+    _params.dt=(hrt_abstime)p->dt;
+    _init_time=hrt_absolute_time();
+    switch(_params.type) {
+      case plan_element_params_s::TYPE_CALIBRATE:
+      break;
+    case plan_element_params_s::TYPE_CHECK:
+      break;
+    case plan_element_params_s::TYPE_TRAJECTORY:
+      _params.trajectory_type = p->trajectory_type;
+      _params.trajectory_direction = p->trajectory_direction;
+      _params.trajectory_radius = p->trajectory_radius;
+      _params.dpsi = p->dpsi;
+       memcpy(_params.init_pos,p->init_pos,sizeof(_params.init_pos));
+       memcpy(_params.final_pos,p->final_pos,sizeof(_params.final_pos));
+       memcpy(_params.init_vel,p->init_vel,sizeof(_params.init_vel));
+       memcpy(_params.final_vel,p->final_vel,sizeof(_params.final_vel));
+       memcpy(_params.init_acc,p->init_acc,sizeof(_params.init_acc));
+       memcpy(_params.final_acc,p->final_acc,sizeof(_params.final_acc));
+    default:
+      break;
+    };
+  }
   ~PlanElement(){}
 
   static uint8_t priority(const PlanElement *p) {
@@ -213,11 +246,7 @@ struct elka::PlanElement {
       return 1;
     case PLAN_ELEMENT_CHECK:
       return 2;
-    case PLAN_ELEMENT_TAKEOFF:
-      return 5;
-    case PLAN_ELEMENT_LAND:
-      return 5;
-    case PLAN_ELEMENT_HOVER:
+    case PLAN_ELEMENT_TRAJECTORY:
       return 5;
     default:
       return 255;
@@ -235,6 +264,25 @@ struct elka::PlanElement {
       _timeout=true;
       _completed=true;
     }
+  }
+
+  static inline math::Vector<SETPOINT_MAP_LEN> set_setpoint_map_point(float x[3],float yaw) {
+    math::Vector<SETPOINT_MAP_LEN> v;
+    v(0)=x[0];
+    v(1)=x[1];
+    v(2)=x[2];
+    v(3)=yaw;
+    return v;
+  }
+
+  //TODO 
+  static inline math::Vector<3> get_center(
+      pose_stamped_s* p,
+      uint8_t trajectory_type,
+      uint8_t trajectory_dir) {
+    if (trajectory_type == TrajectoryTypes::Circle) {
+    }
+    return math::Vector<3>();
   }
 
 	void print_element() {
@@ -255,7 +303,7 @@ private:
 
   elka::BasicEstimator _est; // estimated state in elka inertial frame
   std::vector<pose_stamped_s> _setpoints; // stores current setpoint
-  //std::vector<setpoint_s> _setpoints; // stores current setpoint
+  std::vector<setpoint_s> _setpoints_new; // stores current setpoint
   pose_stamped_s _curr_err;
 	// Store transformation from elka
 	// to snapdragon
@@ -304,6 +352,20 @@ public:
       uint8_t param_mask,
       math::Vector<STATE_LEN>*v,
       uint16_t base_thrust);
+
+  void add_setpoint(setpoint_s *s);
+  void add_setpoint(
+      hrt_abstime dt,
+      math::Vector<SETPOINT_MAP_LEN> &start_pos,
+      math::Vector<SETPOINT_MAP_LEN> &start_vel,
+      math::Vector<SETPOINT_MAP_LEN> &start_acc,
+      math::Vector<SETPOINT_MAP_LEN> &end_pos,
+      math::Vector<SETPOINT_MAP_LEN> &end_vel,
+      math::Vector<SETPOINT_MAP_LEN> &end_acc,
+      uint16_t base_thrust,
+      uint8_t param_mask);
+
+  void trajectory(PlanElement::plan_element_params* params);
   uint8_t takeoff(float z,bool hold);
 	// Generate hover setpoint
 	// Hover at current {x,y,z,yaw} for default length of time
@@ -314,6 +376,8 @@ public:
 	bool at_setpoint();
   // Load positions into setpoints from a vector of positions
   // These positions are typically from a elka::PlanElement
+  int8_t generate_setpoints_new(
+      std::vector<math::Vector<SETPOINT_MAP_LEN>> p);
   int8_t generate_setpoints(
       std::vector<math::Vector<POSITION_LEN>> p);
   void print_setpoints();

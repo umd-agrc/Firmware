@@ -78,6 +78,7 @@ set(msg_files
 	offboard_control_mode.msg
 	optical_flow.msg
 	parameter_update.msg
+  plan_element_params.msg
 	position_setpoint.msg
 	position_setpoint_triplet.msg
 	power_button_state.msg
@@ -119,6 +120,7 @@ set(msg_files
 	vehicle_land_detected.msg
 	vehicle_local_position.msg
 	vehicle_local_position_setpoint.msg
+  vehicle_odometry.msg
 	vehicle_rates_setpoint.msg
 	vehicle_roi.msg
 	vehicle_status.msg

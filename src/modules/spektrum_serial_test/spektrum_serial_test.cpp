@@ -13,6 +13,7 @@
 #include <uORB/topics/input_rc.h>
 #include <uORB/topics/nn_in.h>
 #include <uORB/topics/nn_out.h>
+#include <uORB/topics/plan_element_params.h>
 
 #include "spektrum_serial_test.h"
 
@@ -142,6 +143,7 @@ int spektrum_test_loop(int argc, char *argv[]) {
   elka_packet_s elka_pkt;
   nn_in_s nn_ctl_in;
   nn_out_s nn_ctl_out;
+  plan_element_params_s plan_element_params;
 
   memset(&input_rc,0,sizeof(input_rc));
   memset(&input_rc_trim,0,sizeof(input_rc_trim));
@@ -153,6 +155,7 @@ int spektrum_test_loop(int argc, char *argv[]) {
   memset(&elka_pkt,0,sizeof(elka_pkt));
   memset(&nn_ctl_in,0,sizeof(nn_ctl_in));
   memset(&nn_ctl_out,0,sizeof(nn_ctl_out));
+  memset(&plan_element_params,0,sizeof(plan_element_params));
 
   // Subscribe to elka msg, elka msg ack, and input_rc (TODO only if necessary)
   // Vision position omes from MAVLink SLAM pose estimate
@@ -163,6 +166,7 @@ int spektrum_test_loop(int argc, char *argv[]) {
   int vision_att_sub_fd = orb_subscribe(ORB_ID(vehicle_vision_attitude));
   int vision_vel_sub_fd = orb_subscribe(ORB_ID(vision_velocity));
   int nn_ctl_out_sub_fd = orb_subscribe(ORB_ID(nn_out));
+  int plan_element_params_sub_fd = orb_subscribe(ORB_ID(plan_element_params));
 
   // Set update rates
   orb_set_interval(input_rc_sub_fd, 10);
@@ -170,6 +174,7 @@ int spektrum_test_loop(int argc, char *argv[]) {
   orb_set_interval(vision_att_sub_fd, 30);
   orb_set_interval(vision_vel_sub_fd, 30);
   orb_set_interval(elka_posix_sub_fd, 30);
+  orb_set_interval(plan_element_params_sub_fd, 30);
 
   px4_pollfd_struct_t fds[] = {
     {.fd = input_rc_sub_fd, .events = POLLIN},
@@ -178,6 +183,7 @@ int spektrum_test_loop(int argc, char *argv[]) {
     {.fd = vision_vel_sub_fd, .events = POLLIN},
     {.fd = nn_ctl_out_sub_fd, .events = POLLIN},
     {.fd = elka_posix_sub_fd, .events = POLLIN},
+    {.fd = plan_element_params_sub_fd, .events = POLLIN},
   };
 
   // Set old message duration to 1/10 s
@@ -259,17 +265,16 @@ int spektrum_test_loop(int argc, char *argv[]) {
         orb_copy(ORB_ID(elka_msg),
             elka_posix_sub_fd,
             &elka_posix);
+      }
 
-        if (check_msg_header(elka_posix.data)==ELKA_SUCCESS) {
-          if (elka_posix.data[ELKA_MSG_TYPE] == MSG_TYPE_PLAN_ELEMENT) {
-						deserialize(
-							&plan_element_dt,&elka_posix.data[ELKA_MSG_DATA_OFFSET+1],8);
-            ctl->parse_plan_element(elka_posix.data[ELKA_MSG_DATA_OFFSET],
-							plan_element_dt);
-						PX4_INFO("Received plan element: %d,%" PRIu64 "",
-							elka_posix.data[ELKA_MSG_DATA_OFFSET],plan_element_dt);
-					}
-        }
+      if (fds[6].revents & POLLIN) {
+        orb_copy(ORB_ID(plan_element_params),
+            plan_element_params_sub_fd,
+            &plan_element_params);
+
+        ctl->parse_plan_element(plan_element_params);
+        PX4_INFO("Received plan element: %d",
+          plan_element_params.type);
       }
 
       nav->update_pose(&vision_pos,&vision_att,&vision_vel);
@@ -395,8 +400,8 @@ int pack_position_estimate(elka_packet_s *snd,
   else if (fabs(e[0])>POSITION_MAX*1000) e[0]=0;
   if (fabs(e[1])<POSITION_EPSILON*1000) e[1]=0;
   else if (fabs(e[1])>POSITION_MAX*1000) e[1]=0;
-  if (fabs(e[2])<POSITION_EPSILON*1000) e[2]=0;
-  else if (fabs(e[2])>POSITION_MAX*1000) e[2]=0;
+  if (fabs(e[2])<ALTITUDE_EPSILON*1000) e[2]=0;
+  else if (fabs(e[2])>ALTITUDE_MAX*1000) e[2]=0;
   if (fabs(e[3])<VELOCITY_EPSILON*1000) e[3]=0;
   else if (fabs(e[3])>VELOCITY_MAX*1000) e[3]=0;
   if (fabs(e[4])<VELOCITY_EPSILON*1000) e[4]=0;

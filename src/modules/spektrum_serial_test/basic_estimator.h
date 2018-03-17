@@ -56,6 +56,10 @@ namespace elka {
 
 #define SIGMOID(x) 2*(exp(x)/(exp(x)+1)-.5) // scales between [-1,1]
 
+// Don't neet derivative values in setpoints.
+// These can be derived from interpolating spline
+#define SETPOINT_MAP_LEN 4 // x,y,z,yaw
+
 struct sensor_stamped_s {
   uint8_t type;
   hrt_abstime ts; // timestamp
