@@ -88,11 +88,11 @@ void elka::BasicNavigator::next_setpoint() {
     // Handle case at setpoint 
     // TODO clean this up
     if (b) {
-      if (_setpoints.front().land)
-        _landed=true;
+      if (_setpoints.front().land) _landed=true;
       else _landed = false;
       if (!_setpoints.front().hold) {
         _setpoints.erase(_setpoints.begin());
+        usleep(5000);
         if (!_setpoints.empty()) {
           _setpoints.front().update();
           update_error(&_setpoints.front());
@@ -160,6 +160,7 @@ void elka::BasicNavigator::update_pose(vehicle_local_position_s *p,
     eul;
   math::Matrix<3,3>sf_rot;
   math::Quaternion q;
+  if (!_nav_init) _nav_init=true;
   _est.update_prev_pose();
 
   // Update angles and angle rates
@@ -312,7 +313,7 @@ void elka::BasicNavigator::add_setpoint(
 	_setpoints.push_back(p);
 }
 
-void elka::BasicNavigator::trajectory(PlanElement::plan_element_params* params) {
+int8_t elka::BasicNavigator::trajectory(PlanElement::plan_element_params* params) {
   math::Vector<SETPOINT_MAP_LEN> start_pos, start_vel, start_acc,
                                  end_pos, end_vel, end_acc;
   uint16_t base_thrust = HOVER_DEFAULT_THRUST;
@@ -323,7 +324,7 @@ void elka::BasicNavigator::trajectory(PlanElement::plan_element_params* params) 
   math::Vector<3> center; // useful for circles
   uint8_t num_setpoints; // useful for setpoint chains
   switch(params->_trajectory_type) {
-  case plan_element_params_s::TRAJ_TYPE_TAKEOFF:
+  case PlanElement::TrajectoryTypes::Takeoff:
     start_pos(0) = p->pose(0);
     start_pos(1) = p->pose(1);
     start_pos(2) = p->pose(2);
@@ -342,7 +343,7 @@ void elka::BasicNavigator::trajectory(PlanElement::plan_element_params* params) 
       end_pos, end_vel, end_acc,
       base_thrust, param_mask);
     break;
-  case plan_element_params_s::TRAJ_TYPE_LAND:
+  case PlanElement::TrajectoryTypes::Land:
     start_pos(0) = p->pose(0);
     start_pos(1) = p->pose(1);
     start_pos(2) = p->pose(2);
@@ -363,7 +364,7 @@ void elka::BasicNavigator::trajectory(PlanElement::plan_element_params* params) 
       end_pos, end_vel, end_acc,
       base_thrust, param_mask);
     break;
-  case plan_element_params_s::TRAJ_TYPE_HOVER:
+  case PlanElement::TrajectoryTypes::Hover:
     start_pos(0) = p->pose(0);
     start_pos(1) = p->pose(1);
     start_pos(2) = p->pose(2);
@@ -381,19 +382,19 @@ void elka::BasicNavigator::trajectory(PlanElement::plan_element_params* params) 
       end_pos, end_vel, end_acc,
       base_thrust, param_mask);
     break;
-  case plan_element_params_s::TRAJ_TYPE_LINE:
-    start_pos = PlanElement::set_setpoint_map_point(params->init_pos,eul(2));
-    start_vel = PlanElement::set_setpoint_map_point(params->init_vel,0);
-    start_acc = PlanElement::set_setpoint_map_point(params->init_acc,0);
-    end_pos = PlanElement::set_setpoint_map_point(params->final_pos,eul(2)+params->dpsi);
-    end_vel = PlanElement::set_setpoint_map_point(params->final_vel,0);
-    end_acc = PlanElement::set_setpoint_map_point(params->final_acc,0);
+  case PlanElement::TrajectoryTypes::Line:
+    start_pos = PlanElement::set_setpoint_map_point(params->_init_pos,eul(2));
+    start_vel = PlanElement::set_setpoint_map_point(params->_init_vel,0);
+    start_acc = PlanElement::set_setpoint_map_point(params->_init_acc,0);
+    end_pos = PlanElement::set_setpoint_map_point(params->_final_pos,eul(2)+params->_dpsi);
+    end_vel = PlanElement::set_setpoint_map_point(params->_final_vel,0);
+    end_acc = PlanElement::set_setpoint_map_point(params->_final_acc,0);
     add_setpoint(dt,
       start_pos, start_vel, start_acc,
       end_pos, end_vel, end_acc,
       base_thrust, param_mask);
     break;
-  case plan_element_params_s::TRAJ_TYPE_CIRCLE:
+  case PlanElement::TrajectoryTypes::Circle:
     num_setpoints = 21;
     start_vel.zero();
     start_acc.zero();
@@ -410,38 +411,38 @@ void elka::BasicNavigator::trajectory(PlanElement::plan_element_params* params) 
     //TODO get_center()
     center = PlanElement::get_center(
         p,
-        params->trajectory_type,
-        params->trajectory_direction);
+        params->_trajectory_type,
+        params->_trajectory_direction);
 
     //FIXME verify x forward, y backward
     //FIXME verify that first setpoint equals current position
     //FIXME include all direction possibilities
     for (uint8_t i=0; i<num_setpoints; i++) {
-      switch (params->trajectory_direction){
-        case plan_element_params_s::TRAJ_DIR_FWD:
+      switch (params->_trajectory_direction){
+      case PlanElement::TrajectoryDirection::Fwd:
         start_pos = end_pos;
-        end_pos(0) = center(0) - params->trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
-        end_pos(1) = center(1) - params->trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
+        end_pos(0) = center(0) - params->_trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
+        end_pos(1) = center(1) - params->_trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
         break;
-      case plan_element_params_s::TRAJ_DIR_BACK:
-        end_pos(0) = center(0) + params->trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
-        end_pos(1) = center(1) + params->trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
+      case PlanElement::TrajectoryDirection::Back:
+        end_pos(0) = center(0) + params->_trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
+        end_pos(1) = center(1) + params->_trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
         break;
-      case plan_element_params_s::TRAJ_DIR_LEFT:
-        end_pos(0) = center(0) + params->trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
-        end_pos(1) = center(1) - params->trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
+      case PlanElement::TrajectoryDirection::Left:
+        end_pos(0) = center(0) + params->_trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
+        end_pos(1) = center(1) - params->_trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
         break;
-      case plan_element_params_s::TRAJ_DIR_RIGHT:
-        end_pos(0) = center(0) - params->trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
-        end_pos(1) = center(1) + params->trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
+      case PlanElement::TrajectoryDirection::Right:
+        end_pos(0) = center(0) - params->_trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
+        end_pos(1) = center(1) + params->_trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
         break;
-      case plan_element_params_s::TRAJ_DIR_UP:
-        end_pos(0) = center(0) - params->trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
-        end_pos(1) = center(2) - params->trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
+      case PlanElement::TrajectoryDirection::Up: 
+        end_pos(0) = center(0) - params->_trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
+        end_pos(1) = center(2) - params->_trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
         break;
-        case plan_element_params_s::TRAJ_DIR_DOWN:
-        end_pos(0) = center(0) + params->trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
-        end_pos(1) = center(2) + params->trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
+      case PlanElement::TrajectoryDirection::Down:
+        end_pos(0) = center(0) + params->_trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
+        end_pos(1) = center(2) + params->_trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
         break;
       default:
         break;
@@ -453,15 +454,17 @@ void elka::BasicNavigator::trajectory(PlanElement::plan_element_params* params) 
       //TODO add setpoint
     }
     break;
-  case plan_element_params_s::TRAJ_TYPE_SQUARE:
+  case PlanElement::TrajectoryTypes::Square:
     break;
-  case plan_element_params_s::TRAJ_TYPE_SPIRAL:
+  case PlanElement::TrajectoryTypes::Spiral:
     break;
-  case plan_element_params_s::TRAJ_TYPE_SPIN:
+  case PlanElement::TrajectoryTypes::Spin:
     break;
   default:
     break;
   };
+
+  return ELKA_SUCCESS;
 }
 
 void elka::BasicNavigator::add_setpoint(
@@ -474,6 +477,14 @@ void elka::BasicNavigator::add_setpoint(
       math::Vector<SETPOINT_MAP_LEN> &end_acc,
       uint16_t base_thrust,
       uint8_t param_mask) {
+  /*
+	offset_rot=
+		_elka_sf_r.inversed().to_euler();
+	offset_trans=-_elka_sf_t;
+	pose_stamped_s p(dt,param_mask,v,base_thrust);
+  p.set_offset(&offset_rot,
+							 &offset_trans);
+               */
 
   setpoint_s s(
       dt,
@@ -489,6 +500,15 @@ void elka::BasicNavigator::add_setpoint(
 }
 
 void elka::BasicNavigator::add_setpoint(setpoint_s *s) {
+  /*
+	offset_rot=
+		_elka_sf_r.inversed().to_euler();
+	offset_trans=-_elka_sf_t;
+	pose_stamped_s p(dt,param_mask,v,base_thrust);
+  p.set_offset(&offset_rot,
+							 &offset_trans);
+               */
+
   _setpoints_new.push_back(*s);
 }
 
@@ -497,7 +517,7 @@ uint8_t elka::BasicNavigator::takeoff(float z,bool hold) {
 	hrt_abstime t;
   float eps;
   uint8_t param_mask=0;
-	t=5*TAKEOFF_SETPOINT_DEFAULT_LEN;
+	t=2*TAKEOFF_SETPOINT_DEFAULT_LEN;
 	tmp=get_pose()->pose;
 	tmp(3)=0;
 	tmp(4)=0;
@@ -507,16 +527,30 @@ uint8_t elka::BasicNavigator::takeoff(float z,bool hold) {
   float dz=0;
   tmp(2)=dz;
   tmp(5)=VERTICAL_DEFAULT_SPEED*((z-dz)/z);
+  
+#if defined(ELKA_DEBUG) && defined(DEBUG_GAINS)
+  add_setpoint(t,param_mask,&tmp,TEST_DEFAULT_THRUST);
+#else
+  float thrust_percentage_heuristic;
+  float thrust_percentage_heuristic_init=0.6;
+  float thrust_percentage_heuristic_max=0.8;
+  uint8_t warmup=4;
+  for (int i=1; i<=warmup; i++) {
+    thrust_percentage_heuristic=thrust_percentage_heuristic_init+
+        (i/warmup)*(thrust_percentage_heuristic_max - thrust_percentage_heuristic_init);
+    add_setpoint(0.5*TAKEOFF_SETPOINT_DEFAULT_LEN,
+        param_mask,&tmp,thrust_percentage_heuristic*HOVER_DEFAULT_THRUST);
+  }
+
   eps=fabs(z-dz);
   if (eps<POSITION_EPSILON) {
     if (hold) param_mask|=SETPOINT_PARAM_HOLD;
     tmp(5)=0;
   }
-#if defined(ELKA_DEBUG) && defined(DEBUG_GAINS)
-  add_setpoint(t,param_mask,&tmp,TEST_DEFAULT_THRUST);
-#else
+
   add_setpoint(t,param_mask,&tmp,HOVER_DEFAULT_THRUST);
 #endif
+
   while (eps>POSITION_EPSILON) {
     dz=dz+(z-dz)/2;
     eps=fabs(z-dz);

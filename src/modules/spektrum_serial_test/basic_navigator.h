@@ -8,7 +8,6 @@
 #include <map>
 #include <drivers/drv_hrt.h>
 #include <lib/mathlib/math/Vector.hpp>
-#include <uORB/topics/plan_element_params.h>
 #include <uORB/topics/vehicle_local_position.h>
 #include <uORB/topics/vehicle_attitude.h>
 #include <uORB/topics/vision_velocity.h>
@@ -197,6 +196,32 @@ void deriv(
 //  land : fly straight down to ground with level attitude
 //  hover : remain at altitude with level attitude
 struct elka::PlanElement {
+  struct plan_element_params{
+    uint8_t _type;
+    uint64_t _dt;
+    uint8_t _trajectory_type;
+    uint8_t _trajectory_direction;
+    float _trajectory_radius;
+    float _dpsi;
+    float _init_pos[3],_final_pos[3],
+          _init_vel[3],_final_vel[3],
+          _init_acc[3],_final_acc[3];
+  };
+
+  enum TrajectoryDirection { 
+    Fwd = 0x1,
+    Back = 0x01 << 1,
+    Left = 0x01 << 2,
+    Right = 0x01 << 3,
+    Up = 0x01 << 4,
+    Down = 0x01 << 5
+  };
+  enum TrajectoryTypes { Takeoff, Land, Hover, Line, Circle, Square, Spiral, Spin };
+  enum Types { Check, Calibrate, Trajectory };
+  enum Params 
+    { TrajectoryType, TrajectoryRadius, DPsi, 
+      InitPos, FinalPos, InitVel, FinalVel, InitAcc, FinalAcc };
+
   std::vector<math::Vector<POSITION_LEN>> _positions;
   std::map<uint8_t,plan_element_params> _param_map;
   plan_element_params _params;
@@ -212,28 +237,26 @@ struct elka::PlanElement {
     : _positions(v),_dt(time),_type(t),_begun(false),
 			_completed(false)
 		{_init_time=hrt_absolute_time();}
-  PlanElement(plan_element_params_s* p)
+  PlanElement(plan_element_params* p)
     : _begun(false),_completed(false)
   {
-    _params.type=p->type;
-    _params.dt=(hrt_abstime)p->dt;
+    _params._dt=p->_dt;_params._type=p->_type;
     _init_time=hrt_absolute_time();
-    switch(_params.type) {
-      case plan_element_params_s::TYPE_CALIBRATE:
+    switch(_params._type) {
+    case PLAN_ELEMENT_CALIBRATE:
       break;
-    case plan_element_params_s::TYPE_CHECK:
+    case PLAN_ELEMENT_CHECK:
       break;
-    case plan_element_params_s::TYPE_TRAJECTORY:
-      _params.trajectory_type = p->trajectory_type;
-      _params.trajectory_direction = p->trajectory_direction;
-      _params.trajectory_radius = p->trajectory_radius;
-      _params.dpsi = p->dpsi;
-       memcpy(_params.init_pos,p->init_pos,sizeof(_params.init_pos));
-       memcpy(_params.final_pos,p->final_pos,sizeof(_params.final_pos));
-       memcpy(_params.init_vel,p->init_vel,sizeof(_params.init_vel));
-       memcpy(_params.final_vel,p->final_vel,sizeof(_params.final_vel));
-       memcpy(_params.init_acc,p->init_acc,sizeof(_params.init_acc));
-       memcpy(_params.final_acc,p->final_acc,sizeof(_params.final_acc));
+    case PLAN_ELEMENT_TRAJECTORY:
+      _params._trajectory_type = p->_trajectory_type;
+      _params._trajectory_radius = p->_trajectory_radius;
+      _params._dpsi = p->_dpsi;
+       memcpy(_params._init_pos,p->_init_pos,sizeof(_params._init_pos));
+       memcpy(_params._final_pos,p->_final_pos,sizeof(_params._final_pos));
+       memcpy(_params._init_vel,p->_init_vel,sizeof(_params._init_vel));
+       memcpy(_params._final_vel,p->_final_vel,sizeof(_params._final_vel));
+       memcpy(_params._init_acc,p->_init_acc,sizeof(_params._init_acc));
+       memcpy(_params._final_acc,p->_final_acc,sizeof(_params._final_acc));
     default:
       break;
     };
@@ -316,7 +339,8 @@ public:
   ~BasicNavigator();
 
 	//TODO make private and have getters
-  bool _at_setpoint,_new_setpoint,_from_manual,_landed,_wait,_kill;
+  bool _at_setpoint,_new_setpoint,_from_manual,_landed,_wait,_kill,
+       _nav_init=false;
 
   // Set offset from sensor to fcu
   void set_fcu_offset(math::Vector<3> *r, math::Vector<3> *t);
@@ -365,7 +389,7 @@ public:
       uint16_t base_thrust,
       uint8_t param_mask);
 
-  void trajectory(PlanElement::plan_element_params* params);
+  int8_t trajectory(PlanElement::plan_element_params* params);
   uint8_t takeoff(float z,bool hold);
 	// Generate hover setpoint
 	// Hover at current {x,y,z,yaw} for default length of time

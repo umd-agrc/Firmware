@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <string.h>
 #include <istream>
+#include <uORB/topics/elka_msg.h>
 
 #include "basic_control.h"
 
@@ -87,12 +88,15 @@ int8_t elka::BasicController::parse_plan_element(uint8_t element_type,
   return ELKA_SUCCESS;
 }
 
-/*
-int8_t elka::BasicController::parse_plan_element(plan_element_params_s* el) {
-  _plan.insert(new PlanElement(el));
-  return ELKA_SUCCESS;
+void elka::BasicController::wait_for_nav() {
+  if (_nav._nav_init) return;
+  
+  PX4_INFO("Waiting for nav to init");
+  while (!_nav._nav_init) {
+    usleep(200000);
+    PX4_INFO(".");
+  }
 }
-*/
 
 int8_t elka::BasicController::execute_plan() {
   static std::set<PlanElement *,plan_element_cmp>::iterator it;
@@ -103,12 +107,9 @@ int8_t elka::BasicController::execute_plan() {
   }
 	if (it==_plan.end()) return ELKA_SUCCESS;
 
+  PX4_INFO("CURR PLAN EL TYPE: %d", (*it)->_type);
   // Handle new plan element
   if (!(*it)->_begun) {
-    // Erase all old setpoints only after new plan element 
-    // has begun
-    // To prevent likely crashes when lacking instruction.
-    _nav.reset_setpoints();
     switch((*it)->_type) {
     case PLAN_ELEMENT_NONE:
       break;
@@ -117,15 +118,23 @@ int8_t elka::BasicController::execute_plan() {
     case PLAN_ELEMENT_CHECK:
       break;
     case PLAN_ELEMENT_TAKEOFF:
+      wait_for_nav(); // Wait for good nav pose info
+      _nav.reset_setpoints(); // Erase old setpoints
       ret=_nav.takeoff(HOVER_DEFAULT_HEIGHT,true);
       break;
     case PLAN_ELEMENT_TRAJECTORY:
-      //ret=_nav.trajectory(&(*it)->_params);
+      wait_for_nav();
+      _nav.reset_setpoints();
+      ret=_nav.trajectory(&(*it)->_params);
       break;
     case PLAN_ELEMENT_LAND:
+      wait_for_nav();
+      _nav.reset_setpoints();
       ret=_nav.land(false);
       break;
     case PLAN_ELEMENT_HOVER:
+      wait_for_nav();
+      _nav.reset_setpoints();
       ret=_nav.hover(true);
       break;
     default:
@@ -189,7 +198,13 @@ int run_controller(int argc, char **argv) {
   elka::BasicController *ctl=elka::BasicController::instance();
   thread_running_=true;
   thread_should_exit_=false;
+
+  PX4_INFO("Running controller");
+
   ctl->msgr_idx=0;
+
+  // Wait for vislam to publish
+  usleep(400000);
 
 #if defined(ELKA_DEBUG) && defined(DEBUG_NAVIGATOR)
   print_state_call_interval_=450000; // us
@@ -204,6 +219,7 @@ int run_controller(int argc, char **argv) {
 		ctl->set_msg();
 		ctl->parse_msg();
 		usleep(20000);
+    PX4_INFO("NOT FROZEN");
 	}
   thread_running_=false;
   return ELKA_SUCCESS;

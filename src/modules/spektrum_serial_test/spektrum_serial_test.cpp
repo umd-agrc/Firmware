@@ -13,9 +13,10 @@
 #include <uORB/topics/input_rc.h>
 #include <uORB/topics/nn_in.h>
 #include <uORB/topics/nn_out.h>
-#include <uORB/topics/plan_element_params.h>
 
 #include "spektrum_serial_test.h"
+
+#define POSE_INIT 7 // 0b111
 
 extern "C" { __EXPORT int spektrum_serial_test_main(int argc, char *argv[]); }
 
@@ -143,7 +144,6 @@ int spektrum_test_loop(int argc, char *argv[]) {
   elka_packet_s elka_pkt;
   nn_in_s nn_ctl_in;
   nn_out_s nn_ctl_out;
-  plan_element_params_s plan_element_params;
 
   memset(&input_rc,0,sizeof(input_rc));
   memset(&input_rc_trim,0,sizeof(input_rc_trim));
@@ -155,7 +155,6 @@ int spektrum_test_loop(int argc, char *argv[]) {
   memset(&elka_pkt,0,sizeof(elka_pkt));
   memset(&nn_ctl_in,0,sizeof(nn_ctl_in));
   memset(&nn_ctl_out,0,sizeof(nn_ctl_out));
-  memset(&plan_element_params,0,sizeof(plan_element_params));
 
   // Subscribe to elka msg, elka msg ack, and input_rc (TODO only if necessary)
   // Vision position omes from MAVLink SLAM pose estimate
@@ -166,7 +165,6 @@ int spektrum_test_loop(int argc, char *argv[]) {
   int vision_att_sub_fd = orb_subscribe(ORB_ID(vehicle_vision_attitude));
   int vision_vel_sub_fd = orb_subscribe(ORB_ID(vision_velocity));
   int nn_ctl_out_sub_fd = orb_subscribe(ORB_ID(nn_out));
-  int plan_element_params_sub_fd = orb_subscribe(ORB_ID(plan_element_params));
 
   // Set update rates
   orb_set_interval(input_rc_sub_fd, 10);
@@ -174,7 +172,6 @@ int spektrum_test_loop(int argc, char *argv[]) {
   orb_set_interval(vision_att_sub_fd, 30);
   orb_set_interval(vision_vel_sub_fd, 30);
   orb_set_interval(elka_posix_sub_fd, 30);
-  orb_set_interval(plan_element_params_sub_fd, 30);
 
   px4_pollfd_struct_t fds[] = {
     {.fd = input_rc_sub_fd, .events = POLLIN},
@@ -183,7 +180,6 @@ int spektrum_test_loop(int argc, char *argv[]) {
     {.fd = vision_vel_sub_fd, .events = POLLIN},
     {.fd = nn_ctl_out_sub_fd, .events = POLLIN},
     {.fd = elka_posix_sub_fd, .events = POLLIN},
-    {.fd = plan_element_params_sub_fd, .events = POLLIN},
   };
 
   // Set old message duration to 1/10 s
@@ -197,6 +193,8 @@ int spektrum_test_loop(int argc, char *argv[]) {
            nullptr);
 
   uint8_t msg_type;
+
+  uint8_t pose_init=0;
 
   int error_counter = 0;
 
@@ -236,6 +234,7 @@ int spektrum_test_loop(int argc, char *argv[]) {
         msg_set_serial_state(MSG_TYPE_VISION_POS,
                              &vision_pos,
                              &vision_att);
+        pose_init |= 0x01;
       }
       if (fds[2].revents & POLLIN) { // vision_att 
         orb_copy(ORB_ID(vehicle_vision_attitude),
@@ -244,6 +243,7 @@ int spektrum_test_loop(int argc, char *argv[]) {
         msg_set_serial_state(MSG_TYPE_VISION_POS,
                              &vision_pos,
                              &vision_att);
+        pose_init |= 0x01 << 1;
       }
 
       if (fds[3].revents & POLLIN) { // vision_vel
@@ -252,6 +252,7 @@ int spektrum_test_loop(int argc, char *argv[]) {
                  &vision_vel);
         msg_set_serial_state(MSG_TYPE_VISION_POS,
                              &vision_vel);
+        pose_init |= 0x01 << 2;
       }
 
       if (fds[4].revents & POLLIN) {
@@ -265,19 +266,31 @@ int spektrum_test_loop(int argc, char *argv[]) {
         orb_copy(ORB_ID(elka_msg),
             elka_posix_sub_fd,
             &elka_posix);
+
+        if (check_msg_header(elka_posix.data)==ELKA_SUCCESS) {
+          if (elka_posix.data[ELKA_MSG_TYPE] == MSG_TYPE_PLAN_ELEMENT) {
+            /*
+						deserialize(&plan_element_params,&elka_posix.data[ELKA_MSG_DATA_OFFSET+1]
+							&plan_element_params,&elka_posix.data[ELKA_MSG_DATA_OFFSET+1],
+              elka_posix.data[ELKA_MSG_DATA_OFFSET]);
+            ctl->parse_plan_element(plan_element_params);
+						PX4_INFO("Received plan element: %d",
+							plan_element_params._params._type);
+              */
+						deserialize(
+							&plan_element_dt,&elka_posix.data[ELKA_MSG_DATA_OFFSET+1],8);
+            ctl->parse_plan_element(elka_posix.data[ELKA_MSG_DATA_OFFSET],
+							plan_element_dt);
+						PX4_INFO("Received plan element: %d,%" PRIu64 "",
+							elka_posix.data[ELKA_MSG_DATA_OFFSET],plan_element_dt);
+					}
+        }
       }
 
-      if (fds[6].revents & POLLIN) {
-        orb_copy(ORB_ID(plan_element_params),
-            plan_element_params_sub_fd,
-            &plan_element_params);
-
-        ctl->parse_plan_element(plan_element_params);
-        PX4_INFO("Received plan element: %d",
-          plan_element_params.type);
+      // Ensure all pose is correctly formed
+      if (pose_init == POSE_INIT) {
+        nav->update_pose(&vision_pos,&vision_att,&vision_vel);
       }
-
-      nav->update_pose(&vision_pos,&vision_att,&vision_vel);
 
       // If manual interrupt, reset setpoints 
       // If interrupting w/kill switch, set
@@ -414,14 +427,14 @@ int pack_position_estimate(elka_packet_s *snd,
   else if (fabs(e[7])>ANGLE_RATE_MAX) e[7]=0;
 
 #if defined(ELKA_DEBUG) && defined(DEBUG_POSE)
+  /*
   PX4_INFO("t: %" PRIu16 " xe: %f ye: %f ze: %f\n\
 vxe: %f vye: %f vze: %f\n\
 yawe: %f vyawe: %f",
     base_thrust,e[0],e[1],e[2],e[3],e[4],e[5],e[6],e[7]);
-  /*
-  PX4_INFO("xe: %f, ye: %f, yawe: %f, vyawe: %f",
-      e[0],e[1],e[6],e[7]);
     */
+  PX4_INFO("xe: %f, ye: %f, ze: %f, yawe: %f, vyawe: %f",
+      e[0],e[1],e[2],e[6],e[7]);
 #endif
 
   serialize(&(data[0]),&base_thrust,2);

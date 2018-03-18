@@ -9,7 +9,6 @@
 #include <px4_tasks.h>
 #include <px4_time.h>
 #include <uORB/topics/elka_msg.h>
-#include <uORB/topics/plan_element_params.h>
 
 #include "serial_defines.h"
 #include "basic_navigator.h"
@@ -65,7 +64,6 @@ public:
 
   BasicNavigator *get_navigator() {return &_nav;};
 	int8_t parse_plan_element(uint8_t element_type,hrt_abstime t);
-  int8_t parse_plan_element(plan_element_params_s el);
   //TODO Clear setpoints from plan_element
   //     For now just reset setpoints
   void erase_plan_element(
@@ -76,6 +74,7 @@ public:
     delete e;
     e=nullptr;
   }
+  inline void wait_for_nav();
   int8_t execute_plan();
 	void print_plan() {
 		char s[1024];
