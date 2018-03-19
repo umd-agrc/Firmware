@@ -17,6 +17,11 @@
 
 #include "spektrum_serial_test.h"
 
+#define POSE_POSITION_INIT (0x01)
+#define POSE_ATTITUDE_INIT (0x01 << 1)
+#define POSE_VELOCITY_INIT (0x01 << 2)
+#define POSE_INIT 7 // 0b111
+
 extern "C" { __EXPORT int spektrum_serial_test_main(int argc, char *argv[]); }
 
 static int daemon_task;
@@ -49,7 +54,7 @@ int spektrum_serial_test_main(int argc, char *argv[]) {
         thread_name,
         SCHED_DEFAULT,
         SCHED_PRIORITY_DEFAULT,
-        2000,
+        1500,
         spektrum_test_loop,
         &argv[2]);
 
@@ -133,8 +138,6 @@ int spektrum_test_loop(int argc, char *argv[]) {
   // Define poll_return for defined file descriptors
   int poll_ret;
 
-	hrt_abstime plan_element_dt;
-
   input_rc_s input_rc, input_rc_trim;
   vehicle_local_position_s vision_pos;
   vehicle_attitude_s vision_att;
@@ -196,6 +199,9 @@ int spektrum_test_loop(int argc, char *argv[]) {
            (hrt_callout)&serial_state_timeout_check,
            nullptr);
 
+  // Flag to determine if first pose has been received from SLAM
+  uint8_t pose_init = 0;
+
   uint8_t msg_type;
 
   int error_counter = 0;
@@ -233,6 +239,12 @@ int spektrum_test_loop(int argc, char *argv[]) {
         orb_copy(ORB_ID(vehicle_vision_position),
                  vision_pos_sub_fd,
                  &vision_pos);
+        // Check that message is not equivalently zero
+        // If it is zero, then this is just the initial advertise message
+        if (!(fabs(vision_pos.x)<FLOAT_ERROR_EPSILON &&
+              fabs(vision_pos.y)<FLOAT_ERROR_EPSILON &&
+              fabs(vision_pos.z)<FLOAT_ERROR_EPSILON))
+          pose_init |= POSE_POSITION_INIT;
         msg_set_serial_state(MSG_TYPE_VISION_POS,
                              &vision_pos,
                              &vision_att);
@@ -241,6 +253,13 @@ int spektrum_test_loop(int argc, char *argv[]) {
         orb_copy(ORB_ID(vehicle_vision_attitude),
                  vision_att_sub_fd,
                  &vision_att);
+        // Check that message is not equivalently zero
+        // If it is zero, then this is just the initial advertise message
+        if (!(fabs(vision_att.q[0])<FLOAT_ERROR_EPSILON &&
+              fabs(vision_att.q[1])<FLOAT_ERROR_EPSILON &&
+              fabs(vision_att.q[2])<FLOAT_ERROR_EPSILON &&
+              fabs(vision_att.q[3])<FLOAT_ERROR_EPSILON))
+          pose_init |= POSE_ATTITUDE_INIT;
         msg_set_serial_state(MSG_TYPE_VISION_POS,
                              &vision_pos,
                              &vision_att);
@@ -250,6 +269,15 @@ int spektrum_test_loop(int argc, char *argv[]) {
         orb_copy(ORB_ID(vision_velocity),
                  vision_vel_sub_fd,
                  &vision_vel);
+        // Check that message is not equivalently zero
+        // If it is zero, then this is just the initial advertise message
+        if (!(fabs(vision_vel.vx)<FLOAT_ERROR_EPSILON &&
+              fabs(vision_vel.vy)<FLOAT_ERROR_EPSILON &&
+              fabs(vision_vel.vz)<FLOAT_ERROR_EPSILON &&
+              fabs(vision_vel.rollspeed)<FLOAT_ERROR_EPSILON &&
+              fabs(vision_vel.pitchspeed)<FLOAT_ERROR_EPSILON &&
+              fabs(vision_vel.yawspeed)<FLOAT_ERROR_EPSILON))
+          pose_init |= POSE_VELOCITY_INIT;
         msg_set_serial_state(MSG_TYPE_VISION_POS,
                              &vision_vel);
       }
@@ -273,11 +301,13 @@ int spektrum_test_loop(int argc, char *argv[]) {
             &plan_element_params);
 
         ctl->parse_plan_element(plan_element_params);
-        PX4_INFO("Received plan element: %d",
-          plan_element_params.type);
+        PX4_INFO("Received plan element: %d, %" PRIu64 "",
+          plan_element_params.type,plan_element_params.dt);
       }
 
-      nav->update_pose(&vision_pos,&vision_att,&vision_vel);
+      if (pose_init == POSE_INIT) {
+        nav->update_pose(&vision_pos,&vision_att,&vision_vel);
+      }
 
       // If manual interrupt, reset setpoints 
       // If interrupting w/kill switch, set
@@ -328,8 +358,7 @@ int spektrum_test_loop(int argc, char *argv[]) {
           if (nav->_from_manual) {
             //TODO
             msg_type = MSG_TYPE_SETPOINT;
-            nav->hover(false); // Provide instruction
-            nav->land(true);
+            nav->safe_landing();
             // Reset from_manual flag
             nav->_from_manual=false;
           } else // Case instruction

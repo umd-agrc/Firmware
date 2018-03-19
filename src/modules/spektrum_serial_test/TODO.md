@@ -1,11 +1,17 @@
 #TODO
+## Fix setpoint generator
+Ensure setpoints are created and called correctly
+
+## Fix controller plan execution
+Ensure that operation is predictable
+
 ##Ensure full transform while computing pose
 Include roll,pitch angles in determination of body pose
 
 ##Decouple pose and motor inputs
 Isolate thrust,roll,pitch,yaw based off of x,y,z,q
 
-##Update landing error
+##Emergency landing
 Error should be based only on altitude
 
 ##Complete simple patterns

@@ -50,10 +50,10 @@ private:
 
   struct plan_element_cmp {
     bool operator()(const PlanElement *a,const PlanElement *b){
-			if (PlanElement::priority(a)<PlanElement::priority(b))
+			if (PlanElement::priority(a) < PlanElement::priority(b))
 				return true;
 			else
-				return a->_init_time<b->_init_time;
+				return a->_init_time < b->_init_time;
     }
   };
 
@@ -76,6 +76,7 @@ public:
     delete e;
     e=nullptr;
   }
+  void wait_for_nav();
   int8_t execute_plan();
 	void print_plan() {
 		char s[1024];

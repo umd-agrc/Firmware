@@ -74,9 +74,10 @@ float elka::BasicNavigator::get_err(uint8_t n){
 
 void elka::BasicNavigator::next_setpoint() {
   if (!_setpoints.empty()) {
+    _wait = false;
     _setpoints.front().update();
     // Handle case setpoint timeout
-    if (_setpoints.front().timeout) {
+    if (_setpoints.front()._timeout) {
       _setpoints.erase(_setpoints.begin());
       usleep(5000);
       if (!_setpoints.empty()) {
@@ -88,17 +89,22 @@ void elka::BasicNavigator::next_setpoint() {
     // Handle case at setpoint 
     // TODO clean this up
     if (b) {
-      if (_setpoints.front().land)
+      if (_setpoints.front()._land)
         _landed=true;
       else _landed = false;
-      if (!_setpoints.front().hold) {
+      if (!_setpoints.front()._hold) {
         _setpoints.erase(_setpoints.begin());
+        usleep(5000);
         if (!_setpoints.empty()) {
           _setpoints.front().update();
           update_error(&_setpoints.front());
+        } else {
+          _wait = true;
         }
       }
     } else _landed=false;
+  } else {
+    _wait = true;
   }
 }
 
@@ -160,6 +166,9 @@ void elka::BasicNavigator::update_pose(vehicle_local_position_s *p,
     eul;
   math::Matrix<3,3>sf_rot;
   math::Quaternion q;
+
+  _pose_init = true;
+
   _est.update_prev_pose();
 
   // Update angles and angle rates
@@ -296,6 +305,7 @@ void elka::BasicNavigator::update_pose(vehicle_local_position_s *p,
   next_setpoint();
 }
 
+/*
 void elka::BasicNavigator::add_setpoint(
 	hrt_abstime dt,
   uint8_t param_mask,
@@ -311,18 +321,19 @@ void elka::BasicNavigator::add_setpoint(
 							 &offset_trans);
 	_setpoints.push_back(p);
 }
+*/
 
-void elka::BasicNavigator::trajectory(PlanElement::plan_element_params* params) {
+int8_t elka::BasicNavigator::trajectory(plan_element_params_s* params) {
   math::Vector<SETPOINT_MAP_LEN> start_pos, start_vel, start_acc,
                                  end_pos, end_vel, end_acc;
   uint16_t base_thrust = HOVER_DEFAULT_THRUST;
   uint8_t param_mask=0;
-  hrt_abstime dt = params->_dt;
+  hrt_abstime dt = params->dt;
   pose_stamped_s* p = get_pose();
   math::Vector<3> eul = p->get_eul();
   math::Vector<3> center; // useful for circles
   uint8_t num_setpoints; // useful for setpoint chains
-  switch(params->_trajectory_type) {
+  switch(params->trajectory_type) {
   case plan_element_params_s::TRAJ_TYPE_TAKEOFF:
     start_pos(0) = p->pose(0);
     start_pos(1) = p->pose(1);
@@ -376,6 +387,7 @@ void elka::BasicNavigator::trajectory(PlanElement::plan_element_params* params) 
     end_pos(3) = eul(2);
     end_vel.zero();
     end_acc.zero();
+    param_mask|=SETPOINT_PARAM_HOLD;
     add_setpoint(dt,
       start_pos, start_vel, start_acc,
       end_pos, end_vel, end_acc,
@@ -448,7 +460,7 @@ void elka::BasicNavigator::trajectory(PlanElement::plan_element_params* params) 
       };
 
       // Set yaw
-      end_pos(3) = eul(2) + params->_dpsi*(i/num_setpoints);
+      end_pos(3) = eul(2) + params->dpsi*(i/num_setpoints);
       
       //TODO add setpoint
     }
@@ -462,6 +474,41 @@ void elka::BasicNavigator::trajectory(PlanElement::plan_element_params* params) 
   default:
     break;
   };
+
+  return ELKA_SUCCESS;
+}
+
+void elka::BasicNavigator::safe_landing() {
+  math::Vector<SETPOINT_MAP_LEN> start_pos, start_vel, start_acc,
+                                 end_pos, end_vel, end_acc;
+  uint16_t base_thrust = HOVER_DEFAULT_THRUST;
+  uint8_t param_mask=0;
+  hrt_abstime dt;
+  pose_stamped_s* p = get_pose();
+  math::Vector<3> eul = p->get_eul();
+
+  // Set dt to 1 m/s
+  dt = p->pose(2)*HRT_ABSTIME_TO_SEC;
+
+  start_pos(0) = p->pose(0);
+  start_pos(1) = p->pose(1);
+  start_pos(2) = p->pose(2);
+  start_pos(3) = eul(2);
+  start_vel.zero();
+  start_vel(3) = -0.5*VERTICAL_DEFAULT_SPEED;
+  start_acc.zero();
+  end_pos(0) = p->pose(0);
+  end_pos(1) = p->pose(1);
+  end_pos(2) = LAND_DEFAULT_HEIGHT;
+  end_pos(3) = eul(2);
+  end_vel.zero();
+  end_acc.zero();
+  param_mask|=SETPOINT_PARAM_LAND;
+  base_thrust = LAND_DEFAULT_THRUST;
+  add_setpoint(dt,
+    start_pos, start_vel, start_acc,
+    end_pos, end_vel, end_acc,
+    base_thrust, param_mask);
 }
 
 void elka::BasicNavigator::add_setpoint(
@@ -485,13 +532,22 @@ void elka::BasicNavigator::add_setpoint(
       end_acc,
       base_thrust,
       param_mask);
-  _setpoints_new.push_back(s);
+  _setpoints.push_back(s);
+
+#if defined(ELKA_DEBUG) && defined(DEBUG_SETPOINTS)
+  print_setpoints();
+#endif
 }
 
 void elka::BasicNavigator::add_setpoint(setpoint_s *s) {
-  _setpoints_new.push_back(*s);
+  _setpoints.push_back(*s);
+
+#if defined(ELKA_DEBUG) && defined(DEBUG_SETPOINTS)
+  print_setpoints();
+#endif
 }
 
+/*
 uint8_t elka::BasicNavigator::takeoff(float z,bool hold) {
   math::Vector<STATE_LEN> tmp;
 	hrt_abstime t;
@@ -604,6 +660,7 @@ uint8_t elka::BasicNavigator::land(bool hold) {
   }
   return ELKA_SUCCESS;
 }
+*/
 
 void elka::BasicNavigator::reset_setpoints() {
   math::Vector<STATE_LEN> tmp=math::Vector<STATE_LEN>();
@@ -640,7 +697,7 @@ void elka::BasicNavigator::update_error(pose_stamped_s *curr_setpoint) {
   } else {
     _curr_err.pose.zero();
     //TODO move to next_setpoint() function
-    _wait=true;
+    //_wait=true;
   }
 #if defined(ELKA_DEBUG) && defined(DEBUG_TRANSFORM_ERROR)
   math::Vector<3> err_ang=_curr_err.get_body_pose(SECT_ANG);
@@ -663,10 +720,38 @@ void elka::BasicNavigator::update_error(pose_stamped_s *curr_setpoint) {
 #endif
 }
 
-//void elka::BasicNavigator::update_error(setpoint_s *curr_setpoint) {
-//  TODO
-//}
+void elka::BasicNavigator::update_error(setpoint_s *curr_setpoint) {
+  if (curr_setpoint) {
+    curr_setpoint->set_pose_error(_est.get_pose(),&_curr_err);
+  } else {
+    PX4_INFO("No setpoint provided for pose error update");
+    _curr_err.pose.zero();
+    //TODO move to next_setpoint() function
+    //_wait=true;
+  }
+#if defined(ELKA_DEBUG) && defined(DEBUG_TRANSFORM_ERROR)
+  math::Vector<3> err_ang=_curr_err.get_body_pose(SECT_ANG);
+  PX4_INFO("err yaw: %3.3f",err_ang(2));
+  /*
+  PX4_INFO("pose ang: %3.3f,%3.3f,%3.3f",
+      pose_ang(0),pose_ang(1),pose_ang(2));
+  PX4_INFO("sp ang: %3.3f,%3.3f,%3.3f",
+      sp_ang(0),sp_ang(1),sp_ang(2));
+      */
+  /*
+  PX4_INFO("curr_err_q: %3.3f,%3.3f,%3.3f,%3.3f",
+      _curr_err.pose(6),_curr_err.pose(7),_curr_err.pose(8),
+      _curr_err.pose(9));
+      */
+  /*
+  PX4_INFO("curr_err_pos: %3.3f,%3.3f,%3.3f",
+      _curr_err.pose(0),_curr_err.pose(1),_curr_err.pose(2));
+   */ 
+#endif
 
+}
+
+/*
 int8_t elka::BasicNavigator::generate_setpoints(
     std::vector<math::Vector<POSITION_LEN>> p) {
   float s[STATE_LEN];
@@ -682,9 +767,10 @@ int8_t elka::BasicNavigator::generate_setpoints(
   }
   return ELKA_SUCCESS;
 }
+*/
  //TODO Handle cases when landing or when gaining altitude
  //     Must change base_thrust (currently HOVER_DEFAULT_THRUST)
-int8_t elka::BasicNavigator::generate_setpoints_new(
+int8_t elka::BasicNavigator::generate_setpoints(
     std::vector<math::Vector<SETPOINT_MAP_LEN>> p) {
   std::vector<math::Vector<SETPOINT_MAP_LEN>> v,a;
   setpoint_s s;
@@ -713,11 +799,14 @@ void elka::BasicNavigator::print_setpoints() {
     PX4_INFO("No setpoints");
   else
     PX4_INFO("Setpoints:");
+  math::Vector<SETPOINT_POSE_LEN> s0,sf;
   uint16_t i=0;
   for (auto it=_setpoints.begin();it!=_setpoints.end();it++) {
-    PX4_INFO("%d: %f %f %f,params: %d %d dt %" PRIu64 "",
-        i,it->pose(0),it->pose(1),it->pose(2),
-        it->land,it->hold,it->t[0]);
+    s0=it->get_start();
+    sf=it->get_end();
+    PX4_INFO("%d: (%f,%f,%f,%f), {land: %d hold: %d dt %" PRIu64 "} -->",
+        i,s0(0),s0(1),s0(2),s0(6),sf(0),sf(1),sf(2),sf(6),
+        it->_land,it->_hold,it->_dt_tot);
     i++;
   }
 }

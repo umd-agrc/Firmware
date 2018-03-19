@@ -208,7 +208,6 @@ int nn_loop(int argc, char **argv) {
 int8_t parse_plan_file(
 	std::vector<plan_element_params_s>*plan,const char *plan_file) {
   FILE *f=nullptr;
-	uint8_t plan_element_type;
   plan_element_params_s plan_element;
 
 	char plan_file_path[143]="\0", *plan_fp;
@@ -228,7 +227,6 @@ int8_t parse_plan_file(
   //TODO parse file
   char line[128],*line_ptr,phrase[10][20];
   uint8_t j=0,k=0;
-	hrt_abstime dt;
   while (fgets(line,sizeof(line),f)!=NULL) {
     j=0;k=0;
     line_ptr=line;
@@ -256,7 +254,7 @@ int8_t parse_plan_file(
       } else if (!strcmp(phrase[k],"takeoff")) {
         plan_element.type=plan_element_params_s::TYPE_TRAJECTORY;
         plan_element.trajectory_type=plan_element_params_s::TRAJ_TYPE_TAKEOFF;
-        plan_element.dt=3*PLAN_ELEMENT_DEFAULT_LEN;
+        plan_element.dt=5*PLAN_ELEMENT_DEFAULT_LEN;
       } else if (!strcmp(phrase[k],"land")) {
         plan_element.type=plan_element_params_s::TYPE_TRAJECTORY;
         plan_element.trajectory_type=plan_element_params_s::TRAJ_TYPE_LAND;

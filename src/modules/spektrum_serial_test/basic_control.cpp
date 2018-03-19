@@ -39,8 +39,8 @@ int8_t elka::BasicController::start() {
     daemon_task_ = px4_task_spawn_cmd(
       thread_name,
       SCHED_DEFAULT,
-      SCHED_PRIORITY_DEFAULT+30,
-      2000,
+      SCHED_PRIORITY_DEFAULT,
+      2500,
       run_controller,
       NULL);
 
@@ -87,46 +87,56 @@ int8_t elka::BasicController::parse_plan_element(uint8_t element_type,
   return ELKA_SUCCESS;
 }
 
-/*
-int8_t elka::BasicController::parse_plan_element(plan_element_params_s* el) {
-  _plan.insert(new PlanElement(el));
+int8_t elka::BasicController::parse_plan_element(plan_element_params_s el) {
+  _plan.insert(new PlanElement(&el));
   return ELKA_SUCCESS;
 }
-*/
+
+void elka::BasicController::wait_for_nav() {
+  if (_nav._pose_init) return;
+
+  PX4_INFO("Waiting for SLAM pose");
+  uint32_t i=0;
+  while (!_nav._pose_init) {
+    PX4_INFO(".");
+    usleep(200000);
+    i++;
+  }
+} 
 
 int8_t elka::BasicController::execute_plan() {
   static std::set<PlanElement *,plan_element_cmp>::iterator it;
   uint8_t ret=ELKA_SUCCESS;
   // Get next plan element
   for (it=_plan.begin();it!=_plan.end() && (*it)->_completed;it++) {
+    PX4_INFO("Plan element completed type %d",(*it)->_type);
     erase_plan_element(it);
   }
 	if (it==_plan.end()) return ELKA_SUCCESS;
 
   // Handle new plan element
   if (!(*it)->_begun) {
-    // Erase all old setpoints only after new plan element 
-    // has begun
-    // To prevent likely crashes when lacking instruction.
-    _nav.reset_setpoints();
+    // Load/perform plan element operations if not already begun
+    // Either loading is here and plan actions are done concurrently
+    //    e.g. trajectory
+    // or performance is done here one time
+    //    e.g. calibrate|check
     switch((*it)->_type) {
-    case PLAN_ELEMENT_NONE:
+    case plan_element_params_s::TYPE_NONE:
       break;
-    case PLAN_ELEMENT_CALIBRATE:
+    case plan_element_params_s::TYPE_CALIBRATE:
+      PX4_INFO("Performing calibration");
       break;
-    case PLAN_ELEMENT_CHECK:
+    case plan_element_params_s::TYPE_CHECK:
+      PX4_INFO("Performing check");
       break;
-    case PLAN_ELEMENT_TAKEOFF:
-      ret=_nav.takeoff(HOVER_DEFAULT_HEIGHT,true);
-      break;
-    case PLAN_ELEMENT_TRAJECTORY:
-      //ret=_nav.trajectory(&(*it)->_params);
-      break;
-    case PLAN_ELEMENT_LAND:
-      ret=_nav.land(false);
-      break;
-    case PLAN_ELEMENT_HOVER:
-      ret=_nav.hover(true);
+    case plan_element_params_s::TYPE_TRAJECTORY:
+      PX4_INFO("Loading trajectory");
+      wait_for_nav();
+      _nav.reset_setpoints();
+      //TODO place hover hold setpoint in while new trajectory is being
+      //generated
+      ret=_nav.trajectory(&(*it)->_params);
       break;
     default:
       PX4_WARN("Invalid plan element type %d",(*it)->_type);
@@ -137,6 +147,7 @@ int8_t elka::BasicController::execute_plan() {
   (*it)->update();
 
   if ((*it)->_timeout) {
+    PX4_INFO("Plan element timeout type %d",(*it)->_type);
     erase_plan_element(it);
     return ELKA_SUCCESS;
   }
@@ -189,6 +200,7 @@ int run_controller(int argc, char **argv) {
   elka::BasicController *ctl=elka::BasicController::instance();
   thread_running_=true;
   thread_should_exit_=false;
+
   ctl->msgr_idx=0;
 
 #if defined(ELKA_DEBUG) && defined(DEBUG_NAVIGATOR)
@@ -203,7 +215,10 @@ int run_controller(int argc, char **argv) {
 		ctl->execute_plan();
 		ctl->set_msg();
 		ctl->parse_msg();
-		usleep(20000);
+#if defined(ELKA_DEBUG) && defined(DEBUG_CONTROLLER)
+    ctl->print_plan();
+#endif
+		usleep(25000);
 	}
   thread_running_=false;
   return ELKA_SUCCESS;

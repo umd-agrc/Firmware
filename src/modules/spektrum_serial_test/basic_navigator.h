@@ -17,6 +17,7 @@
 #include "basic_estimator.h"
 
 // Defines close enough to setpoint position in meters
+#define FLOAT_ERROR_EPSILON 0.000001
 #define POSITION_EPSILON 0.04
 #define ALTITUDE_EPSILON 0.04
 #define VELOCITY_EPSILON 0.04
@@ -40,7 +41,8 @@
 // Define error height close to ground in meters
 #define LANDING_HEIGHT_EPSILON 0.1
 
-#define POSITION_LEN 5
+#define POSITION_LEN 5 // {x,y,z,yaw,yawrate}
+#define SETPOINT_POSE_LEN 8 // {x,y,z,vx,vy,vz,yaw,yawrate}
 
 #define SETPOINT_X 'x'
 #define SETPOINT_Y 'y'
@@ -56,8 +58,8 @@ static math::Matrix<6,6> spline_coefs_mat_;
 static bool spline_coefs_init_=false;
 
 struct setpoint_s {
-  // _coefs vector is function order+1 for all polynomial terms
-  // including constant term
+  // _coefs stores each setpoint parameter's associated interpolating
+  // spline
   std::map<char,math::Vector<SETPOINT_FUNCTION_ORDER+1>> _coefs;
   hrt_abstime _dt,_dt_tot,_start;
   uint16_t _base_thrust;
@@ -116,43 +118,117 @@ struct setpoint_s {
       _timeout=true;
     }
   }
+
+  math::Vector<SETPOINT_POSE_LEN> eval_at(hrt_abstime dt) {
+    math::Vector<SETPOINT_POSE_LEN> s;
+    // x
+    s(0)=_coefs[SETPOINT_X](0)*pow(dt,5)+
+         _coefs[SETPOINT_X](1)*pow(dt,4)+
+         _coefs[SETPOINT_X](2)*pow(dt,3)+
+         _coefs[SETPOINT_X](3)*pow(dt,2)+
+         _coefs[SETPOINT_X](4)*pow(dt,1)+
+         _coefs[SETPOINT_X](5);
+    // y
+    s(1)=_coefs[SETPOINT_Y](0)*pow(dt,5)+
+         _coefs[SETPOINT_Y](1)*pow(dt,4)+
+         _coefs[SETPOINT_Y](2)*pow(dt,3)+
+         _coefs[SETPOINT_Y](3)*pow(dt,2)+
+         _coefs[SETPOINT_Y](4)*pow(dt,1)+
+         _coefs[SETPOINT_Y](5);
+    // z
+    s(2)=_coefs[SETPOINT_Z](0)*pow(dt,5)+
+         _coefs[SETPOINT_Z](1)*pow(dt,4)+
+         _coefs[SETPOINT_Z](2)*pow(dt,3)+
+         _coefs[SETPOINT_Z](3)*pow(dt,2)+
+         _coefs[SETPOINT_Z](4)*pow(dt,1)+
+         _coefs[SETPOINT_Z](5);
+    // vx
+    s(3)=5*_coefs[SETPOINT_X](0)*pow(dt,4)+
+         4*_coefs[SETPOINT_X](1)*pow(dt,3)+
+         3*_coefs[SETPOINT_X](2)*pow(dt,2)+
+         2*_coefs[SETPOINT_X](3)*pow(dt,1)+
+         1*_coefs[SETPOINT_X](4);
+    // vy
+    s(4)=5*_coefs[SETPOINT_Y](0)*pow(dt,4)+
+         4*_coefs[SETPOINT_Y](1)*pow(dt,3)+
+         3*_coefs[SETPOINT_Y](2)*pow(dt,2)+
+         2*_coefs[SETPOINT_Y](3)*pow(dt,1)+
+         1*_coefs[SETPOINT_Y](4);
+    // vz
+    s(5)=5*_coefs[SETPOINT_Z](0)*pow(dt,4)+
+         4*_coefs[SETPOINT_Z](1)*pow(dt,3)+
+         3*_coefs[SETPOINT_Z](2)*pow(dt,2)+
+         2*_coefs[SETPOINT_Z](3)*pow(dt,1)+
+         1*_coefs[SETPOINT_Z](4);
+    // yaw
+    s(6)=_coefs[SETPOINT_YAW](0)*pow(dt,5)+
+         _coefs[SETPOINT_YAW](1)*pow(dt,4)+
+         _coefs[SETPOINT_YAW](2)*pow(dt,3)+
+         _coefs[SETPOINT_YAW](3)*pow(dt,2)+
+         _coefs[SETPOINT_YAW](4)*pow(dt,1)+
+         _coefs[SETPOINT_YAW](5);
+    // yawrate
+    s(7)=5*_coefs[SETPOINT_YAW](0)*pow(dt,4)+
+         4*_coefs[SETPOINT_YAW](1)*pow(dt,3)+
+         3*_coefs[SETPOINT_YAW](2)*pow(dt,2)+
+         2*_coefs[SETPOINT_YAW](3)*pow(dt,1)+
+         1*_coefs[SETPOINT_YAW](4);
+    return s;
+
+  }
+
   // Evaluate spline w/_coefs
   // Mark _timeout if setpoint has timed out
   // Thus, **must** check for timeout after calling eval()
-  math::Vector<POSITION_LEN> eval() {
-    math::Vector<POSITION_LEN> s;
+  math::Vector<SETPOINT_POSE_LEN> eval() {
+    math::Vector<SETPOINT_POSE_LEN> s;
     update();
     if (_timeout) return s;
-    s(0)=_coefs[SETPOINT_X](0)*pow(_dt,5)+
-         _coefs[SETPOINT_X](1)*pow(_dt,4)+
-         _coefs[SETPOINT_X](2)*pow(_dt,3)+
-         _coefs[SETPOINT_X](3)*pow(_dt,2)+
-         _coefs[SETPOINT_X](4)*pow(_dt,1)+
-         _coefs[SETPOINT_X](5);
-    s(1)=_coefs[SETPOINT_Y](0)*pow(_dt,5)+
-         _coefs[SETPOINT_Y](1)*pow(_dt,4)+
-         _coefs[SETPOINT_Y](2)*pow(_dt,3)+
-         _coefs[SETPOINT_Y](3)*pow(_dt,2)+
-         _coefs[SETPOINT_Y](4)*pow(_dt,1)+
-         _coefs[SETPOINT_Y](5);
-    s(2)=_coefs[SETPOINT_Z](0)*pow(_dt,5)+
-         _coefs[SETPOINT_Z](1)*pow(_dt,4)+
-         _coefs[SETPOINT_Z](2)*pow(_dt,3)+
-         _coefs[SETPOINT_Z](3)*pow(_dt,2)+
-         _coefs[SETPOINT_Z](4)*pow(_dt,1)+
-         _coefs[SETPOINT_Z](5);
-    s(3)=_coefs[SETPOINT_YAW](0)*pow(_dt,5)+
-         _coefs[SETPOINT_YAW](1)*pow(_dt,4)+
-         _coefs[SETPOINT_YAW](2)*pow(_dt,3)+
-         _coefs[SETPOINT_YAW](3)*pow(_dt,2)+
-         _coefs[SETPOINT_YAW](4)*pow(_dt,1)+
-         _coefs[SETPOINT_YAW](5);
-    s(4)=5*_coefs[SETPOINT_YAW](0)*pow(_dt,4)+
-         4*_coefs[SETPOINT_YAW](1)*pow(_dt,3)+
-         3*_coefs[SETPOINT_YAW](2)*pow(_dt,2)+
-         2*_coefs[SETPOINT_YAW](3)*pow(_dt,1)+
-         1*_coefs[SETPOINT_YAW](4);
+    else return eval_at(_dt);
+  }
+
+  math::Vector<SETPOINT_POSE_LEN> get_start() {
+    math::Vector<SETPOINT_POSE_LEN> s;
+    s(0) = _coefs[SETPOINT_X](5);
+    s(1) = _coefs[SETPOINT_Y](5);
+    s(2) = _coefs[SETPOINT_Z](5);
+    s(3) = _coefs[SETPOINT_X](4);
+    s(4) = _coefs[SETPOINT_Y](4);
+    s(5) = _coefs[SETPOINT_Z](4);
+    s(6) = _coefs[SETPOINT_YAW](5);
+    s(7) = _coefs[SETPOINT_YAW](4);
     return s;
+  }
+
+  math::Vector<SETPOINT_POSE_LEN> get_end() {
+    return eval_at(_dt_tot);
+  }
+
+  void set_pose_error(pose_stamped_s* p, pose_stamped_s* e) {
+    math::Vector<3>eul_err;
+    math::Vector<SETPOINT_POSE_LEN> setpoint = eval();
+
+    // Check for timeout
+    if (_timeout) {
+      e->pose.zero();
+      return;
+    }
+
+    e->pose(0)=setpoint(0)-p->pose(0); // x
+    e->pose(1)=setpoint(1)-p->pose(1); // y
+    e->pose(2)=setpoint(2)-p->pose(2); // z
+    e->pose(3)=setpoint(3)-p->pose(3); // vx
+    e->pose(4)=setpoint(4)-p->pose(4); // vy
+    e->pose(5)=setpoint(5)-p->pose(5); // vz
+    e->pose(12)=setpoint(7)-p->pose(12); // yawrate
+
+    // euler angles
+    eul_err=p->get_eul();
+    eul_err(0) = 0; // roll
+    eul_err(1) = 0; // pitch
+    eul_err(2) = setpoint(6) - eul_err(2); // yaw
+    e->set_eul(eul_err);
+    e->base_thrust = _base_thrust;
   }
 };
 
@@ -198,8 +274,7 @@ void deriv(
 //  hover : remain at altitude with level attitude
 struct elka::PlanElement {
   std::vector<math::Vector<POSITION_LEN>> _positions;
-  std::map<uint8_t,plan_element_params> _param_map;
-  plan_element_params _params;
+  plan_element_params_s _params;
   hrt_abstime _dt, _start,_init_time;
   uint8_t _type; 
   bool _begun,_completed,_timeout;
@@ -213,7 +288,7 @@ struct elka::PlanElement {
 			_completed(false)
 		{_init_time=hrt_absolute_time();}
   PlanElement(plan_element_params_s* p)
-    : _begun(false),_completed(false)
+    : _type(p->type),_begun(false),_completed(false)
   {
     _params.type=p->type;
     _params.dt=(hrt_abstime)p->dt;
@@ -280,7 +355,7 @@ struct elka::PlanElement {
       pose_stamped_s* p,
       uint8_t trajectory_type,
       uint8_t trajectory_dir) {
-    if (trajectory_type == TrajectoryTypes::Circle) {
+    if (trajectory_type == plan_element_params_s::TRAJ_TYPE_CIRCLE) {
     }
     return math::Vector<3>();
   }
@@ -302,8 +377,8 @@ private:
   //                    yaw(+) :=TODO (assuming cw about z from forward)
 
   elka::BasicEstimator _est; // estimated state in elka inertial frame
-  std::vector<pose_stamped_s> _setpoints; // stores current setpoint
-  std::vector<setpoint_s> _setpoints_new; // stores current setpoint
+  //std::vector<pose_stamped_s> _setpoints; // stores current setpoint
+  std::vector<setpoint_s> _setpoints; // stores current setpoint
   pose_stamped_s _curr_err;
 	// Store transformation from elka
 	// to snapdragon
@@ -317,6 +392,7 @@ public:
 
 	//TODO make private and have getters
   bool _at_setpoint,_new_setpoint,_from_manual,_landed,_wait,_kill;
+  bool _pose_init=false;
 
   // Set offset from sensor to fcu
   void set_fcu_offset(math::Vector<3> *r, math::Vector<3> *t);
@@ -346,12 +422,13 @@ public:
   void update_pose(vehicle_local_position_s *p,
                    vehicle_attitude_s *a,
                    vision_velocity_s *v);
-	// Clear setpoints 
+  /*
   void add_setpoint(
       hrt_abstime t,
       uint8_t param_mask,
       math::Vector<STATE_LEN>*v,
       uint16_t base_thrust);
+      */
 
   void add_setpoint(setpoint_s *s);
   void add_setpoint(
@@ -365,24 +442,29 @@ public:
       uint16_t base_thrust,
       uint8_t param_mask);
 
-  void trajectory(PlanElement::plan_element_params* params);
+  int8_t trajectory(plan_element_params_s* params);
+  void safe_landing();
+  /*
   uint8_t takeoff(float z,bool hold);
 	// Generate hover setpoint
 	// Hover at current {x,y,z,yaw} for default length of time
 	//TODO maintain yaw
 	uint8_t hover(bool hold);
 	uint8_t land(bool hold);
+  */
   void reset_setpoints();
 	bool at_setpoint();
   // Load positions into setpoints from a vector of positions
   // These positions are typically from a elka::PlanElement
-  int8_t generate_setpoints_new(
+  int8_t generate_setpoints(
       std::vector<math::Vector<SETPOINT_MAP_LEN>> p);
+  /*
   int8_t generate_setpoints(
       std::vector<math::Vector<POSITION_LEN>> p);
+      */
   void print_setpoints();
   void update_error(pose_stamped_s *curr_setpoint);
-  //void update_error(setpoint_s *curr_setpoint);
+  void update_error(setpoint_s *curr_setpoint);
 
   void copy_pose_error(
       vehicle_local_position_s *p,
