@@ -197,6 +197,7 @@ int spektrum_test_loop(int argc, char *argv[]) {
   uint8_t pose_init=0;
 
   int error_counter = 0;
+  uint32_t no_data_counter = 0;
 
   while (!thread_should_exit) {
     poll_ret = px4_poll(&fds[0], sizeof(fds)/sizeof(fds[0]), 500);
@@ -204,7 +205,9 @@ int spektrum_test_loop(int argc, char *argv[]) {
     // Handle the poll result
     if (poll_ret == 0) {
       // None of our providers is giving us data
-      PX4_ERR("Got no data");
+      if (!(no_data_counter%3))
+        PX4_ERR("Got no data");
+      no_data_counter++;
     } else if (poll_ret < 0) {
       // Should be an emergency
       if (error_counter < 10 || error_counter % 50 == 0) {
@@ -357,8 +360,21 @@ int spektrum_test_loop(int argc, char *argv[]) {
           }
         }
       } else if (_serial_state==SERIAL_STATE_NONE) {
+        PX4_INFO("SUCCESSFULLY KILLED ON SHITTY RPC FAILURE!");
         // Wait state
-        // Do nothing
+        // Kill motors for safety
+        msg_type=MSG_TYPE_KILL;
+        if (check_state(msg_type) &&
+            (pack_spektrum_cmd(
+                &elka_pkt,
+                msg_type,
+                &input_rc_trim))
+             != PX4_ERROR) {
+          msg_mgr->send(elka_msgr_d,&elka_pkt);
+          usleep(20000);
+        }
+        // Reset kill flag
+        nav->_kill=false;
       }
     }
 

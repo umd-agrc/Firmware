@@ -92,9 +92,12 @@ void elka::BasicController::wait_for_nav() {
   if (_nav._nav_init) return;
   
   PX4_INFO("Waiting for nav to init");
+  uint32_t i=0;
   while (!_nav._nav_init) {
+    if (!(i%10))
+      PX4_INFO(".");
     usleep(200000);
-    PX4_INFO(".");
+    i++;
   }
 }
 
@@ -103,11 +106,12 @@ int8_t elka::BasicController::execute_plan() {
   uint8_t ret=ELKA_SUCCESS;
   // Get next plan element
   for (it=_plan.begin();it!=_plan.end() && (*it)->_completed;it++) {
+    PX4_INFO("Plan element type %d completed", (*it)->_type);
     erase_plan_element(it);
   }
 	if (it==_plan.end()) return ELKA_SUCCESS;
 
-  PX4_INFO("CURR PLAN EL TYPE: %d", (*it)->_type);
+  //PX4_INFO("CURR PLAN EL TYPE: %d", (*it)->_type);
   // Handle new plan element
   if (!(*it)->_begun) {
     switch((*it)->_type) {
@@ -146,6 +150,7 @@ int8_t elka::BasicController::execute_plan() {
   (*it)->update();
 
   if ((*it)->_timeout) {
+    PX4_INFO("Plan element type %d timeout", (*it)->_type);
     erase_plan_element(it);
     return ELKA_SUCCESS;
   }
@@ -219,7 +224,6 @@ int run_controller(int argc, char **argv) {
 		ctl->set_msg();
 		ctl->parse_msg();
 		usleep(20000);
-    PX4_INFO("NOT FROZEN");
 	}
   thread_running_=false;
   return ELKA_SUCCESS;

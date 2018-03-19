@@ -230,15 +230,16 @@ struct elka::PlanElement {
   bool _begun,_completed,_timeout;
 
   PlanElement(uint8_t t,hrt_abstime time)
-    : _dt(time),_type(t),_begun(false),_completed(false)
+    : _dt(time),_type(t),_begun(false),_completed(false),
+      _timeout(false)
 		{_init_time=hrt_absolute_time();}
   PlanElement(uint8_t t,hrt_abstime time,
 		std::vector<math::Vector<POSITION_LEN>> &v)
     : _positions(v),_dt(time),_type(t),_begun(false),
-			_completed(false)
+			_completed(false),_timeout(false)
 		{_init_time=hrt_absolute_time();}
   PlanElement(plan_element_params* p)
-    : _begun(false),_completed(false)
+    : _begun(false),_completed(false),_timeout(false)
   {
     _params._dt=p->_dt;_params._type=p->_type;
     _init_time=hrt_absolute_time();

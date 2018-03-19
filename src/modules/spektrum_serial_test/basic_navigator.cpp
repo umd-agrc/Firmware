@@ -74,6 +74,7 @@ float elka::BasicNavigator::get_err(uint8_t n){
 
 void elka::BasicNavigator::next_setpoint() {
   if (!_setpoints.empty()) {
+    _wait = false;
     _setpoints.front().update();
     // Handle case setpoint timeout
     if (_setpoints.front().timeout) {
@@ -96,9 +97,13 @@ void elka::BasicNavigator::next_setpoint() {
         if (!_setpoints.empty()) {
           _setpoints.front().update();
           update_error(&_setpoints.front());
+        } else {
+          _wait = true;
         }
       }
     } else _landed=false;
+  } else {
+    _wait = true;
   }
 }
 
@@ -538,7 +543,7 @@ uint8_t elka::BasicNavigator::takeoff(float z,bool hold) {
   for (int i=1; i<=warmup; i++) {
     thrust_percentage_heuristic=thrust_percentage_heuristic_init+
         (i/warmup)*(thrust_percentage_heuristic_max - thrust_percentage_heuristic_init);
-    add_setpoint(0.5*TAKEOFF_SETPOINT_DEFAULT_LEN,
+    add_setpoint(TAKEOFF_SETPOINT_DEFAULT_LEN,
         param_mask,&tmp,thrust_percentage_heuristic*HOVER_DEFAULT_THRUST);
   }
 
@@ -641,8 +646,11 @@ uint8_t elka::BasicNavigator::land(bool hold) {
 
 void elka::BasicNavigator::reset_setpoints() {
   math::Vector<STATE_LEN> tmp=math::Vector<STATE_LEN>();
+  math::Vector<3>eul_err;
   hrt_abstime t=hrt_absolute_time();
   _curr_err.set_pose(t,&tmp);
+  _curr_err.set_eul(eul_err);
+  _curr_err.base_thrust = HOVER_DEFAULT_THRUST;
 	_setpoints.clear();
 	
   _at_setpoint=false;
@@ -674,7 +682,7 @@ void elka::BasicNavigator::update_error(pose_stamped_s *curr_setpoint) {
   } else {
     _curr_err.pose.zero();
     //TODO move to next_setpoint() function
-    _wait=true;
+    //_wait=true;
   }
 #if defined(ELKA_DEBUG) && defined(DEBUG_TRANSFORM_ERROR)
   math::Vector<3> err_ang=_curr_err.get_body_pose(SECT_ANG);
