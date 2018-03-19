@@ -124,7 +124,7 @@ int nn_loop(int argc, char **argv) {
   //Read in and publish plan file
 	char plan_file[66]="test_takeoff.plan";
 
-	orb_advert_t elka_posix_pub=orb_advertise(ORB_ID(elka_msg), &elka_posix);
+	//orb_advert_t elka_posix_pub=orb_advertise(ORB_ID(elka_msg), &elka_posix);
 	orb_advert_t plan_element_params_pub=
     orb_advertise(ORB_ID(plan_element_params), &plan_element_params);
 	// Sleep for one second before publishing plan file
@@ -133,11 +133,12 @@ int nn_loop(int argc, char **argv) {
 	write_elka_msg_header(&elka_posix,9,MSG_TYPE_PLAN_ELEMENT);
   parse_plan_file(&l_plan_element_params,plan_file);
 	for (auto it=l_plan_element_params.begin();it!=l_plan_element_params.end();it++) {
-		orb_publish(ORB_ID(elka_msg), elka_posix_pub, &elka_posix);
+		//orb_publish(ORB_ID(elka_msg), elka_posix_pub, &elka_posix);
+    memcpy(&plan_element_params, &(*it), sizeof(plan_element_params));
     orb_publish(ORB_ID(plan_element_params), plan_element_params_pub, &(*it));
 		// Sleep so that DSP side can receive messages w/o missing any
 		// DSP receives elka_msg at 30Hz
-		usleep(200000);
+		usleep(500000);
 	}
 
   /*
