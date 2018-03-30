@@ -162,6 +162,7 @@ struct pose_stamped_s {
   pose_stamped_s(hrt_abstime tau,
                  math::Vector<STATE_LEN> *v) {
     initialized=false;
+    memset(t,0,sizeof(t));
     set_pose(tau,v);
   }
   //Use this initializer if using pose as setpoint
@@ -176,9 +177,11 @@ struct pose_stamped_s {
     land=param_mask&SETPOINT_PARAM_LAND;
     set_pose(tau,v);
     base_thrust=thrust;
+    memset(t,0,sizeof(t));
   }
   pose_stamped_s(pose_stamped_s *p) {
     initialized=false;
+    memset(t,0,sizeof(t));
     set_pose(p);
   }
   // Update pose parameters
@@ -224,7 +227,7 @@ struct pose_stamped_s {
       t[n]=tau;
       pose(n)=f;
     }
-  }
+  } 
   float pos_norm() {
     return sqrtf(pose(1)*pose(1)+pose(2)*pose(2)+pose(3)*pose(3));
   }

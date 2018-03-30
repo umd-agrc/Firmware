@@ -224,9 +224,9 @@ void elka::BasicNavigator::update_pose(vehicle_local_position_s *p,
   //  theta yz, (q1 left->up)
   //  theta zx, (q1 up->back)
   sf_elka_inert_rot={
-      atan2(sf_elka_t_curr(1),sf_elka_t_curr(0)),
-      atan2(sf_elka_t_curr(2),sf_elka_t_curr(1)),
-      atan2(sf_elka_t_curr(0),sf_elka_t_curr(2))
+      (float)atan2(sf_elka_t_curr(1),sf_elka_t_curr(0)),
+      (float)atan2(sf_elka_t_curr(2),sf_elka_t_curr(1)),
+      (float)atan2(sf_elka_t_curr(0),sf_elka_t_curr(2))
   };
 
   // Get inertial frame angle rates
@@ -234,23 +234,23 @@ void elka::BasicNavigator::update_pose(vehicle_local_position_s *p,
     -_elka_sf_r*sf_rot*body_axis_rate_curr;
 
   // x = -r_xy*yaw(cw)-r_zx*pitch(back)
-  inert_vel(0) -= 
-    -sf_elka_radii(0)*sin(sf_elka_inert_rot(0))
-      *inertial_angle_rate_curr(2)
-    +sf_elka_radii(2)*cos(sf_elka_inert_rot(2))
-      *inertial_angle_rate_curr(1);
+  inert_vel(0) = (double)inert_vel(0) -
+    (double)-sf_elka_radii(0)*sin(sf_elka_inert_rot(0))
+      *(double)inertial_angle_rate_curr(2)
+    +(double)sf_elka_radii(2)*cos(sf_elka_inert_rot(2))
+      *(double)inertial_angle_rate_curr(1);
   // y += r_yz*roll(right) - r_xy*yaw(cw)
-  inert_vel(1) -= 
-    -sf_elka_radii(0)*cos(sf_elka_inert_rot(0))
-      *inertial_angle_rate_curr(2)
-    -sf_elka_radii(1)*sin(sf_elka_inert_rot(1))
-      *inertial_angle_rate_curr(0);
+  inert_vel(1) = (double)inert_vel(1) -
+    (double)-sf_elka_radii(0)*cos(sf_elka_inert_rot(0))
+      *(double)inertial_angle_rate_curr(2)
+    -(double)sf_elka_radii(1)*sin(sf_elka_inert_rot(1))
+      *(double)inertial_angle_rate_curr(0);
   // z += r_xz*pitch(back) - r_yz*roll(right)
-  inert_vel(2) -= 
-    sf_elka_radii(1)*cos(sf_elka_inert_rot(1))
-      *inertial_angle_rate_curr(0)
-    -sf_elka_radii(2)*sin(sf_elka_inert_rot(2))
-      *inertial_angle_rate_curr(1);
+  inert_vel(2) = (double)inert_vel(2) - 
+    (double)sf_elka_radii(1)*cos(sf_elka_inert_rot(1))
+      *(double)inertial_angle_rate_curr(0)
+    -(double)sf_elka_radii(2)*sin(sf_elka_inert_rot(2))
+      *(double)inertial_angle_rate_curr(1);
 
 #if defined(ELKA_DEBUG) && defined(DEBUG_TRANSFORM)
   math::Vector<3>euler=_est.get_pose()->get_eul();
@@ -354,7 +354,7 @@ int8_t elka::BasicNavigator::trajectory(PlanElement::plan_element_params* params
     start_pos(2) = p->pose(2);
     start_pos(3) = eul(2);
     start_vel.zero();
-    start_vel(3) = -1.0*VERTICAL_DEFAULT_SPEED;
+    start_vel(3) = -1.0*(double)VERTICAL_DEFAULT_SPEED;
     start_acc.zero();
     end_pos(0) = p->pose(0);
     end_pos(1) = p->pose(1);
@@ -426,28 +426,40 @@ int8_t elka::BasicNavigator::trajectory(PlanElement::plan_element_params* params
       switch (params->_trajectory_direction){
       case PlanElement::TrajectoryDirection::Fwd:
         start_pos = end_pos;
-        end_pos(0) = center(0) - params->_trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
-        end_pos(1) = center(1) - params->_trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
+        end_pos(0) = (double)center(0) -
+          (double)params->_trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
+        end_pos(1) = (double)center(1) -
+          (double)params->_trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
         break;
       case PlanElement::TrajectoryDirection::Back:
-        end_pos(0) = center(0) + params->_trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
-        end_pos(1) = center(1) + params->_trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
+        end_pos(0) = (double)center(0) +
+          (double)params->_trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
+        end_pos(1) = (double)center(1) +
+          (double)params->_trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
         break;
       case PlanElement::TrajectoryDirection::Left:
-        end_pos(0) = center(0) + params->_trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
-        end_pos(1) = center(1) - params->_trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
+        end_pos(0) = (double)center(0) +
+          (double)params->_trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
+        end_pos(1) = (double)center(1) -
+          (double)params->_trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
         break;
       case PlanElement::TrajectoryDirection::Right:
-        end_pos(0) = center(0) - params->_trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
-        end_pos(1) = center(1) + params->_trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
+        end_pos(0) = (double)center(0) -
+          (double)params->_trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
+        end_pos(1) = (double)center(1) +
+          (double)params->_trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
         break;
       case PlanElement::TrajectoryDirection::Up: 
-        end_pos(0) = center(0) - params->_trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
-        end_pos(1) = center(2) - params->_trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
+        end_pos(0) = (double)center(0) -
+          (double)params->_trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
+        end_pos(1) = (double)center(2) -
+          (double)params->_trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
         break;
       case PlanElement::TrajectoryDirection::Down:
-        end_pos(0) = center(0) + params->_trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
-        end_pos(1) = center(2) + params->_trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
+        end_pos(0) = (double)center(0) +
+          (double)params->_trajectory_radius*sin(i/num_setpoints*2*M_2_PI);
+        end_pos(1) = (double)center(2) +
+          (double)params->_trajectory_radius*cos(i/num_setpoints*2*M_2_PI);
         break;
       default:
         break;
@@ -522,7 +534,7 @@ uint8_t elka::BasicNavigator::takeoff(float z,bool hold) {
 	hrt_abstime t;
   float eps;
   uint8_t param_mask=0;
-	t=2*TAKEOFF_SETPOINT_DEFAULT_LEN;
+	t=2*(double)TAKEOFF_SETPOINT_DEFAULT_LEN;
 	tmp=get_pose()->pose;
 	tmp(3)=0;
 	tmp(4)=0;
@@ -544,13 +556,13 @@ uint8_t elka::BasicNavigator::takeoff(float z,bool hold) {
   for (int i=1; i<=warmup; i++) {
     thrust_percentage_heuristic=thrust_percentage_heuristic_init+
         (i/warmup)*(thrust_percentage_heuristic_max - thrust_percentage_heuristic_init);
-    add_setpoint(.5*TAKEOFF_SETPOINT_DEFAULT_LEN,
+    add_setpoint(.5*(double)TAKEOFF_SETPOINT_DEFAULT_LEN,
         param_mask,&tmp,thrust_percentage_heuristic*HOVER_DEFAULT_THRUST);
   }
   param_mask^=SETPOINT_PARAM_HOLD_UNTIL_TIME;
 
   eps=fabs(z-dz);
-  if (eps<POSITION_EPSILON) {
+  if ((double)eps<(double)POSITION_EPSILON) {
     if (hold) param_mask|=SETPOINT_PARAM_HOLD;
     tmp(5)=0;
   }
@@ -558,12 +570,12 @@ uint8_t elka::BasicNavigator::takeoff(float z,bool hold) {
   add_setpoint(t,param_mask,&tmp,HOVER_DEFAULT_THRUST);
 #endif
 
-  while (eps>POSITION_EPSILON) {
+  while ((double)eps>(double)POSITION_EPSILON) {
     dz=dz+(z-dz)/2;
     eps=fabs(z-dz);
     tmp(2)=dz;
     tmp(5)=VERTICAL_DEFAULT_SPEED*((z-dz)/z);
-    if (eps<POSITION_EPSILON) {
+    if ((double)eps<(double)POSITION_EPSILON) {
       if (hold) param_mask|=SETPOINT_PARAM_HOLD;
       tmp(5)=0;
     }
@@ -583,9 +595,9 @@ uint8_t elka::BasicNavigator::hover(bool hold) {
   if (hold) param_mask|=SETPOINT_PARAM_HOLD;
 
 #if defined(ELKA_DEBUG) && defined(DEBUG_HOVER_HOLD)
-	t=1000*SETPOINT_DEFAULT_LEN;
+	t=1000*(double)SETPOINT_DEFAULT_LEN;
 #else
-  t=100*SETPOINT_DEFAULT_LEN;
+  t=100*(double)SETPOINT_DEFAULT_LEN;
 #endif
   // For hover, keep current x,y,z
 	tmp=get_pose()->pose;
@@ -612,16 +624,16 @@ uint8_t elka::BasicNavigator::land(bool hold) {
   uint16_t base_thrust=LAND_DEFAULT_THRUST;
 #endif
   uint8_t param_mask=0;
-	t=LANDING_SETPOINT_DEFAULT_LEN;
+	t=(double)LANDING_SETPOINT_DEFAULT_LEN;
 	tmp=get_pose()->pose;
 	tmp(3)=0;
 	tmp(4)=0;
-  tmp(5)=-VERTICAL_DEFAULT_SPEED;
+  tmp(5)=-(double)VERTICAL_DEFAULT_SPEED;
 	tmp(10)=0;
 	tmp(11)=0;
 	tmp(12)=0;
   float z=tmp(2),init_z=tmp(2);
-  tmp(5)=-VERTICAL_DEFAULT_SPEED*(z/init_z);
+  tmp(5)=(double)-VERTICAL_DEFAULT_SPEED*(double)(z/init_z);
   // Check if landed. Can land lower than LAND_DEFAULT_HEIGHT,
   // but not higher
   if (fabs(z-LAND_DEFAULT_HEIGHT)<LANDING_HEIGHT_EPSILON) {
@@ -632,7 +644,7 @@ uint8_t elka::BasicNavigator::land(bool hold) {
   }
   add_setpoint(t,param_mask,&tmp,base_thrust);
   while (fabs(z-LAND_DEFAULT_HEIGHT)>LANDING_HEIGHT_EPSILON) {
-    z-=(z-LAND_DEFAULT_HEIGHT)/1.5;
+    z=(double)z - (double)(z-LAND_DEFAULT_HEIGHT)/1.5;
     tmp(2)=z;
     tmp(5)=-VERTICAL_DEFAULT_SPEED*(z/init_z);
     if (fabs(z-LAND_DEFAULT_HEIGHT)<LANDING_HEIGHT_EPSILON) {
@@ -663,7 +675,7 @@ void elka::BasicNavigator::reset_setpoints() {
 bool elka::BasicNavigator::at_setpoint() {
   // Retrieve norm of position error as norm error
   float norm_curr_err = _curr_err.pos_norm();
-  if (norm_curr_err < POSITION_ERROR_THRES)
+  if ((double)norm_curr_err < (double)POSITION_ERROR_THRES)
     _at_setpoint = true;
   else _at_setpoint = false;
 
@@ -715,7 +727,7 @@ int8_t elka::BasicNavigator::generate_setpoints(
     std::vector<math::Vector<POSITION_LEN>> p) {
   float s[STATE_LEN];
   math::Vector<STATE_LEN> v;
-  hrt_abstime dt=SETPOINT_DEFAULT_LEN;
+  hrt_abstime dt=(hrt_abstime)SETPOINT_DEFAULT_LEN;
   uint8_t param_mask=0;
   for (auto it=p.begin(); it!=p.end(); it++) {
     s[0]=(*it)(0);
@@ -732,7 +744,7 @@ int8_t elka::BasicNavigator::generate_setpoints_new(
     std::vector<math::Vector<SETPOINT_MAP_LEN>> p) {
   std::vector<math::Vector<SETPOINT_MAP_LEN>> v,a;
   setpoint_s s;
-  hrt_abstime dt=SETPOINT_DEFAULT_LEN;
+  hrt_abstime dt=(hrt_abstime)SETPOINT_DEFAULT_LEN;
   uint8_t param_mask=0;
   //TODO implement deriv()
   //TODO set final component to zero
@@ -760,7 +772,7 @@ void elka::BasicNavigator::print_setpoints() {
   uint16_t i=0;
   for (auto it=_setpoints.begin();it!=_setpoints.end();it++) {
     PX4_INFO("%d: %f %f %f,params: %d %d dt %" PRIu64 "",
-        i,it->pose(0),it->pose(1),it->pose(2),
+        i,(double)it->pose(0),(double)it->pose(1),(double)it->pose(2),
         it->land,it->hold,it->t[0]);
     i++;
   }

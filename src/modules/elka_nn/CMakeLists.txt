@@ -8,7 +8,6 @@ px4_add_module(
     nn.cpp
     genann.cpp
     genann.h
-		nn_defines.h
 		nn_utils.h
 	DEPENDS
 		platforms__common

@@ -10,7 +10,7 @@
 // Test whether *p is not NUL and not whitespace
 #define WANT(p) *p && !isspace(*p)
 
-#define ELKA_DIR "/dev/fs/.elka/"
+#define ELKA_DIR "/home/linaro/.elka/"
 #define FLIGHT_PLAN_DIR "flight_plan/"
 
 #define NUM_JOYSTICK_CHANNELS 4
@@ -72,7 +72,7 @@
 #define DEBUG_POSE 1
 //#define DEBUG_VISION_VELOCITY 1
 //#define DEBUG_FILTER 1
-#define DEBUG_SPEKTRUM 1
+//#define DEBUG_SPEKTRUM 1
 //#define DEBUG_TRANSFORM 1
 //#define DEBUG_TRANSFORM_ERROR 1
 #define DEBUG_HOVER_HOLD 1

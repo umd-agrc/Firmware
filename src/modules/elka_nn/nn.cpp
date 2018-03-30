@@ -17,9 +17,9 @@
 #include <uORB/topics/nn_out.h>
 #include <uORB/topics/elka_msg.h>
 #include <lib/mathlib/math/Vector.hpp>
+#include <elka_ctl/posix/serial_defines.h>
+#include <elka_ctl/posix/basic_messenger.h>
 
-#include "nn_defines.h"
-#include "nn_utils.h"
 #include "genann.h"
 
 extern "C" { __EXPORT int nn_main(int argc, char *argv[]); }
@@ -245,22 +245,22 @@ int8_t parse_plan_file(
     for (k=0;k<j;k++) {
       if (!strcmp(phrase[k],"calibrate")) {
 				plan_element_type=PLAN_ELEMENT_CALIBRATE;
-				dt=0.7*PLAN_ELEMENT_DEFAULT_LEN;
+				dt=0.7*(double)PLAN_ELEMENT_DEFAULT_LEN;
       } else if (!strcmp(phrase[k],"check")) {
 				plan_element_type=PLAN_ELEMENT_CHECK;
-				dt=0.7*PLAN_ELEMENT_DEFAULT_LEN;
+				dt=0.7*(double)PLAN_ELEMENT_DEFAULT_LEN;
       } else if (!strcmp(phrase[k],"takeoff")) {
 				plan_element_type=PLAN_ELEMENT_TAKEOFF;
-				dt=3*PLAN_ELEMENT_DEFAULT_LEN;
+				dt=3*(double)PLAN_ELEMENT_DEFAULT_LEN;
       } else if (!strcmp(phrase[k],"land")) {
 				plan_element_type=PLAN_ELEMENT_LAND;
-				dt=PLAN_ELEMENT_DEFAULT_LEN;
+				dt=(double)PLAN_ELEMENT_DEFAULT_LEN;
       } else if (!strcmp(phrase[k],"hover")) {
 				plan_element_type=PLAN_ELEMENT_HOVER;
 #if defined(ELKA_DEBUG) && defined(DEBUG_HOVER_HOLD)
-				dt=100*PLAN_ELEMENT_DEFAULT_LEN;
+				dt=100*(double)PLAN_ELEMENT_DEFAULT_LEN;
 #else
-				dt=PLAN_ELEMENT_DEFAULT_LEN;
+				dt=(double)PLAN_ELEMENT_DEFAULT_LEN;
 #endif
       } else {
         PX4_WARN("Unrecognized plan word %s",phrase[k]);

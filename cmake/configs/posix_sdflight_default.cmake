@@ -89,5 +89,6 @@ set(config_module_list
 
   #AGRC stuff
   modules/elka_nn
+  modules/elka_ctl/posix
   #modules/rovio
 	)

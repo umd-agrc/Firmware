@@ -2,15 +2,29 @@
 
 #include <uORB/topics/elka_msg.h>
 
-#include "nn_defines.h"
+#include <elka_ctl/posix/serial_defines.h>
 
 void write_elka_msg_header(
     elka_msg_s *snd,
     uint16_t data_len,
     uint8_t msg_type);
 
-int8_t serialize(uint8_t *dst, void *src, uint8_t len);
-int8_t deserialize(void *dst, uint8_t *src, uint8_t len);
+//int8_t serialize(uint8_t *dst, void *src, uint8_t len);
+//int8_t deserialize(void *dst, uint8_t *src, uint8_t len);
+
+int8_t serialize(uint8_t *dst, void *src, uint8_t len) {
+  if (len < MAX_ELKA_MSG_LEN) {
+    memcpy(dst,src,len);
+    return ELKA_SUCCESS;
+  } else return SERIAL_ERROR;
+}
+
+int8_t deserialize(void *dst, uint8_t *src, uint8_t len) {
+  if (len < MAX_ELKA_MSG_LEN) {
+    memcpy(dst,src,len);
+    return ELKA_SUCCESS;
+  } else return SERIAL_ERROR;
+}
 
 // Trim to no leading/ending whitespace|unprintable chars
 //TODO can still have unprintable chars in middle of string
@@ -54,19 +68,4 @@ void write_elka_msg_header(
   snd->data[ELKA_MSG_TYPE+1]=ELKA_MSG_HEADER_ASSURANCE_BYTE;
   snd->data[ELKA_MSG_TYPE+2]=ELKA_MSG_HEADER_ASSURANCE_BYTE;
 }
-
-int8_t serialize(uint8_t *dst, void *src, uint8_t len) {
-  if (len < MAX_ELKA_MSG_LEN) {
-    memcpy(dst,src,len);
-    return ELKA_SUCCESS;
-  } else return SERIAL_ERROR;
-}
-
-int8_t deserialize(void *dst, uint8_t *src, uint8_t len) {
-  if (len < MAX_ELKA_MSG_LEN) {
-    memcpy(dst,src,len);
-    return ELKA_SUCCESS;
-  } else return SERIAL_ERROR;
-}
-
 

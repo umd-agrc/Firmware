@@ -14,15 +14,15 @@
 #include <uORB/topics/nn_in.h>
 #include <uORB/topics/nn_out.h>
 
-#include "spektrum_serial_test.h"
+#include "elka_ctl_posix.h"
 
 #define POSE_INIT 7 // 0b111
 
-extern "C" { __EXPORT int spektrum_serial_test_main(int argc, char *argv[]); }
+extern "C" { __EXPORT int elka_ctl_posix_main(int argc, char *argv[]); }
 
 static int daemon_task;
 static volatile bool thread_should_exit;
-static volatile bool thread_running;
+static volatile bool _thread_running;
 int _serial_state;
 hrt_abstime _prev_state_update, _old_msg_duration;
 struct hrt_call	_serial_state_call;
@@ -32,20 +32,20 @@ static uint8_t _pose_init=0;
 static bool _spektrum_switch_flipped=false;
 
 void usage() {
-  PX4_WARN("usage: spektrum_serial_test <start | stop | status>");
+  PX4_WARN("usage: elka_ctl_posix <start | stop | status>");
 }
 
-int spektrum_serial_test_main(int argc, char *argv[]) {
-	if (argc < 3) {
+int elka_ctl_posix_main(int argc, char *argv[]) {
+	if (argc < 2) {
 		PX4_WARN("Missing action.");
     usage();
     return PX4_OK;
 	}
 
 	if (!strcmp(argv[1], "start")) {
-    if (!thread_running) {
+    if (!_thread_running) {
       char thread_name[256];
-      sprintf(thread_name,"spektrum_serial_test");
+      sprintf(thread_name,"elka_ctl_posix");
 
       thread_should_exit = false;
       daemon_task = px4_task_spawn_cmd(
@@ -53,7 +53,7 @@ int spektrum_serial_test_main(int argc, char *argv[]) {
         SCHED_DEFAULT,
         SCHED_PRIORITY_DEFAULT,
         2000,
-        spektrum_test_loop,
+        elka_ctl_loop,
         &argv[2]);
 
       unsigned constexpr max_wait_us = 1000000;
@@ -62,25 +62,25 @@ int spektrum_serial_test_main(int argc, char *argv[]) {
 
       for (j=0; j < max_wait_steps; j++) {
         usleep(max_wait_us / max_wait_steps);
-        if (thread_running) {
+        if (_thread_running) {
           break;
         }
       }
       return !(j < max_wait_steps);
     } else {
-      PX4_INFO("spektrum serial test is already running.");
+      PX4_INFO("elka control posix-side is already running.");
     }
 
 
   } else if (!strcmp(argv[1], "stop")) {
-    if (!thread_running) {
-      PX4_WARN("spektrum serial test already stopped");
+    if (!_thread_running) {
+      PX4_WARN("elka control posix-side already stopped");
       return PX4_OK;
     }
 
     thread_should_exit = true;
 
-    while(thread_running) {
+    while(_thread_running) {
       usleep(200000);
       PX4_WARN(".");
     }
@@ -89,10 +89,10 @@ int spektrum_serial_test_main(int argc, char *argv[]) {
 
     return PX4_OK;
   } else if (!strcmp(argv[1], "status")) {
-    if (thread_running) {
-      PX4_INFO("spektrum serial test is running");
+    if (_thread_running) {
+      PX4_INFO("elka control posix-side is running");
     } else {
-      PX4_INFO("spektrum serial test is not running");
+      PX4_INFO("elka control posix-side is not running");
     }
 
     return PX4_OK;
@@ -106,18 +106,20 @@ int spektrum_serial_test_main(int argc, char *argv[]) {
 
 //TODO update serial framework to use new messenger/manager 
 //     framework
-int spektrum_test_loop(int argc, char *argv[]) {
-  thread_running = true;
+int elka_ctl_loop(int argc, char *argv[]) {
+  _thread_running = true;
 
   _serial_state = SERIAL_STATE_NONE;
 
   // Set up message manager
+  /*
   elka::BasicMessageMgr *msg_mgr=elka::BasicMessageMgr::instance();
   int elka_msgr_d=msg_mgr->add_messenger(
       MESSENGER_SERIAL,(void *)"/dev/tty-1");
   // Create controller and get pointer copy of navigator
+  */
   elka::BasicController *ctl=elka::BasicController::instance();
-  ctl->add_messenger(elka_msgr_d);
+  //ctl->add_messenger(elka_msgr_d);
   usleep(200000);
   //FIXME make a small program to run on krait-side at startup to parse plan
   //file
@@ -170,6 +172,8 @@ int spektrum_test_loop(int argc, char *argv[]) {
   input_rc.values[SPEKTRUM_THRUST_CHANNEL] = RAW_THRUST_BASELINE;
   input_rc.values[3] = RAW_ROLL_BASELINE;
 
+	orb_advert_t elka_packet_pub=orb_advertise(ORB_ID(elka_packet), &elka_pkt);
+
   // Subscribe to elka msg, elka msg ack, and input_rc (TODO only if necessary)
   // Vision position omes from MAVLink SLAM pose estimate
   // Local position comes from LPE BlockLocalPositionEstimator
@@ -208,7 +212,6 @@ int spektrum_test_loop(int argc, char *argv[]) {
 
   uint8_t msg_type;
 
-
   int error_counter = 0;
   uint32_t no_data_counter = 0;
 
@@ -231,7 +234,8 @@ int spektrum_test_loop(int argc, char *argv[]) {
               msg_type,
               &input_rc_trim))
            != PX4_ERROR) {
-        msg_mgr->send(elka_msgr_d,&elka_pkt);
+        orb_publish(ORB_ID(elka_packet), elka_packet_pub, &elka_pkt);
+        //msg_mgr->send(elka_msgr_d,&elka_pkt);
         usleep(20000);
       }
       // Reset kill flag
@@ -350,7 +354,8 @@ int spektrum_test_loop(int argc, char *argv[]) {
                 msg_type,
                 &input_rc))
              != PX4_ERROR) {
-          msg_mgr->send(elka_msgr_d,&elka_pkt);
+          orb_publish(ORB_ID(elka_packet), elka_packet_pub, &elka_pkt);
+          //msg_mgr->send(elka_msgr_d,&elka_pkt);
           usleep(20000);
         }
       } else if (_serial_state == SERIAL_STATE_POSE) {
@@ -364,7 +369,8 @@ int spektrum_test_loop(int argc, char *argv[]) {
                   msg_type,
                   &input_rc_trim))
                != PX4_ERROR) {
-            msg_mgr->send(elka_msgr_d,&elka_pkt);
+            orb_publish(ORB_ID(elka_packet), elka_packet_pub, &elka_pkt);
+            //msg_mgr->send(elka_msgr_d,&elka_pkt);
             usleep(20000);
           }
           // Reset kill flag
@@ -385,7 +391,8 @@ int spektrum_test_loop(int argc, char *argv[]) {
               (pack_position_estimate(&elka_pkt,
                                       nav)
                != PX4_ERROR)) {
-            msg_mgr->send(elka_msgr_d,&elka_pkt);
+            orb_publish(ORB_ID(elka_packet), elka_packet_pub, &elka_pkt);
+            //msg_mgr->send(elka_msgr_d,&elka_pkt);
             usleep(20000);
           }
         }
@@ -401,7 +408,8 @@ int spektrum_test_loop(int argc, char *argv[]) {
                 msg_type,
                 &input_rc_trim))
              != PX4_ERROR) {
-          msg_mgr->send(elka_msgr_d,&elka_pkt);
+          orb_publish(ORB_ID(elka_packet), elka_packet_pub, &elka_pkt);
+          //msg_mgr->send(elka_msgr_d,&elka_pkt);
           usleep(20000);
         }
         // Reset kill flag
@@ -413,22 +421,23 @@ int spektrum_test_loop(int argc, char *argv[]) {
     if ((pack_test_msg(
             &elka_pkt))
          != PX4_ERROR) {
-      msg_mgr->send(elka_msgr_d,&elka_pkt);
+      orb_publish(ORB_ID(elka_packet), elka_packet_pub, &elka_pkt);
+      //msg_mgr->send(elka_msgr_d,&elka_pkt);
       usleep(10000);
     }
 #endif
 
     // Parse packets received and reset packet to send
     //TODO this should be threaded
-    msg_mgr->parse_packets();
+    //msg_mgr->parse_packets();
     elka_pkt.num_msgs=0;
     elka_pkt.len=0;
   }
 
   ctl->exit();
-  msg_mgr->remove_messenger(elka_msgr_d);
+  //msg_mgr->remove_messenger(elka_msgr_d);
 
-  thread_running = false;
+  _thread_running = false;
 
   return PX4_OK;
 }
@@ -474,14 +483,17 @@ int pack_position_estimate(elka_packet_s *snd,
   else if (fabs(e[7])>ANGLE_RATE_MAX) e[7]=0;
 
 #if defined(ELKA_DEBUG) && defined(DEBUG_POSE)
-  /*
-  PX4_INFO("t: %" PRIu16 " xe: %f ye: %f ze: %f\n\
-vxe: %f vye: %f vze: %f\n\
-yawe: %f vyawe: %f",
-    base_thrust,e[0],e[1],e[2],e[3],e[4],e[5],e[6],e[7]);
-    */
-  PX4_INFO("xe: %f, ye: %f, ze: %f, yawe: %f, vyawe: %f",
-      e[0],e[1],e[2],e[6],e[7]);
+  static uint32_t pose_print_ctr = 0;
+  if (!((pose_print_ctr++)%10)) {
+    /*
+    PX4_INFO("t: %" PRIu16 " xe: %f ye: %f ze: %f\n\
+  vxe: %f vye: %f vze: %f\n\
+  yawe: %f vyawe: %f",
+      base_thrust,e[0],e[1],e[2],e[3],e[4],e[5],e[6],e[7]);
+      */
+    PX4_INFO("xe: %f, ye: %f, ze: %f, yawe: %f, vyawe: %f",
+        (double)e[0],(double)e[1],(double)e[2],(double)e[6],(double)e[7]);
+  }
 #endif
 
   serialize(&(data[0]),&base_thrust,2);

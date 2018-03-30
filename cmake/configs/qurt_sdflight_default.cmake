@@ -113,7 +113,7 @@ set(config_module_list
   #
   # AGRC stuff
   #
-  modules/spektrum_serial_test
+  modules/elka_ctl/qurt
 	)
 
 set(config_df_driver_list
