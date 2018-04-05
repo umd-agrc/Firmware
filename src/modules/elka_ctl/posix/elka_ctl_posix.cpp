@@ -1,3 +1,5 @@
+#include <iostream>
+#include <fstream>
 #include <poll.h>
 #include <px4_config.h>
 #include <px4_defines.h>
@@ -30,6 +32,10 @@ static int _serial_state_call_interval;
 gains_s _gains[3];
 static uint8_t _pose_init=0;
 static bool _spektrum_switch_flipped=false;
+
+#ifdef LOG_POSE_ERROR
+static std::ofstream _pose_error_file;
+#endif
 
 void usage() {
   PX4_WARN("usage: elka_ctl_posix <start | stop | status>");
@@ -135,6 +141,16 @@ int elka_ctl_loop(int argc, char *argv[]) {
   }
   elka::BasicNavigator *nav=ctl->get_navigator();
 
+#ifdef LOG_POSE_ERROR
+  char pose_error_file_name[40];
+  srand(hrt_absolute_time());
+  sprintf(pose_error_file_name,"body_pose_error%d.txt",rand()%10000);
+  PX4_INFO("Logging body pose error to %s",pose_error_file_name);
+  _pose_error_file.open(pose_error_file_name);
+  usleep(2500);
+  _pose_error_file << "dt,base_thrust,xe,ye,ze,vxe,vye,vze,yawe,yawspeede" << std::endl;
+#endif
+
   // Define poll_return for defined file descriptors
   int poll_ret;
 
@@ -148,6 +164,7 @@ int elka_ctl_loop(int argc, char *argv[]) {
   elka_packet_s elka_pkt;
   nn_in_s nn_ctl_in;
   nn_out_s nn_ctl_out;
+  plan_element_params_s plan_element_params;
 
   memset(&input_rc,0,sizeof(input_rc));
   memset(&input_rc_trim,0,sizeof(input_rc_trim));
@@ -159,6 +176,7 @@ int elka_ctl_loop(int argc, char *argv[]) {
   memset(&elka_pkt,0,sizeof(elka_pkt));
   memset(&nn_ctl_in,0,sizeof(nn_ctl_in));
   memset(&nn_ctl_out,0,sizeof(nn_ctl_out));
+  memset(&plan_element_params,0,sizeof(plan_element_params));
 
   // Set default trim values
   // TODO verify channels. Ok for now b/c baselines for all except thrust are
@@ -183,6 +201,7 @@ int elka_ctl_loop(int argc, char *argv[]) {
   int vision_att_sub_fd = orb_subscribe(ORB_ID(vehicle_vision_attitude));
   int vision_vel_sub_fd = orb_subscribe(ORB_ID(vision_velocity));
   int nn_ctl_out_sub_fd = orb_subscribe(ORB_ID(nn_out));
+  int plan_element_params_sub_fd = orb_subscribe(ORB_ID(plan_element_params));
 
   // Set update rates
   orb_set_interval(input_rc_sub_fd, 10);
@@ -190,6 +209,7 @@ int elka_ctl_loop(int argc, char *argv[]) {
   orb_set_interval(vision_att_sub_fd, 30);
   orb_set_interval(vision_vel_sub_fd, 30);
   orb_set_interval(elka_posix_sub_fd, 30);
+  orb_set_interval(plan_element_params_sub_fd, 30);
 
   px4_pollfd_struct_t fds[] = {
     {.fd = input_rc_sub_fd, .events = POLLIN},
@@ -198,6 +218,7 @@ int elka_ctl_loop(int argc, char *argv[]) {
     {.fd = vision_vel_sub_fd, .events = POLLIN},
     {.fd = nn_ctl_out_sub_fd, .events = POLLIN},
     {.fd = elka_posix_sub_fd, .events = POLLIN},
+    {.fd = plan_element_params_sub_fd, .events = POLLIN},
   };
 
   // Set old message duration to 1/10 s
@@ -323,6 +344,16 @@ int elka_ctl_loop(int argc, char *argv[]) {
         }
       }
 
+      if (fds[6].revents & POLLIN) {
+        orb_copy(ORB_ID(plan_element_params),
+          plan_element_params_sub_fd,
+          &plan_element_params);
+        
+        ctl->parse_plan_element(plan_element_params);
+        PX4_INFO("Received plan element: %d, %" PRIu64 "",
+          plan_element_params.type,plan_element_params.dt);
+      }
+
       // Ensure all pose is correctly formed
       if (_pose_init == POSE_INIT) {
         nav->update_pose(&vision_pos,&vision_att,&vision_vel);
@@ -380,8 +411,9 @@ int elka_ctl_loop(int argc, char *argv[]) {
           if (nav->_from_manual) {
             //TODO
             msg_type = MSG_TYPE_SETPOINT;
-            nav->hover(false); // Provide instruction
-            nav->land(true);
+            nav->safe_landing();
+            //nav->hover(false); // Provide instruction
+            //nav->land(true);
             // Reset from_manual flag
             nav->_from_manual=false;
           } else // Case instruction
@@ -434,8 +466,14 @@ int elka_ctl_loop(int argc, char *argv[]) {
     elka_pkt.len=0;
   }
 
+  PX4_INFO("Exiting controller");
   ctl->exit();
   //msg_mgr->remove_messenger(elka_msgr_d);
+
+#ifdef LOG_POSE_ERROR
+  PX4_INFO("Closing pose error log file");
+  _pose_error_file.close();  
+#endif
 
   _thread_running = false;
 
@@ -446,13 +484,19 @@ int pack_position_estimate(elka_packet_s *snd,
                            elka::BasicNavigator *nav) {
   // Error of form [xe,ye,ze,vxe,vye,vze,yawe,vyawe]
   float e[8];
-  uint8_t data_len=34,data[34];
+  uint8_t data_len=38,data[38];
   uint16_t base_thrust;
+  // Initialize time as 1 second in the past
+  // This line is only evaluated once
+  static hrt_abstime t_prev=hrt_absolute_time() - HRT_ABSTIME_TO_SEC;
+  float dt;
 
   math::Vector<12> body_pose_e;
 
   body_pose_e=nav->get_body_pose_error();
   base_thrust=nav->get_base_thrust(); 
+
+  dt = toSec(hrt_absolute_time()-t_prev);
 
   // Sending body frame error in mm/rad
   e[0] = (float)(-body_pose_e(1)*1000);
@@ -463,6 +507,12 @@ int pack_position_estimate(elka_packet_s *snd,
   e[5] = (float)(body_pose_e(5)*1000);
   e[6] = (float)-body_pose_e(8); 
   e[7] = (float)-body_pose_e(11);
+
+#ifdef LOG_POSE_ERROR
+  _pose_error_file << hrt_absolute_time() << "," << e[0] << "," << e[1] << "," << e[2] 
+        << "," << e[3] << "," << e[4] << "," << e[5] << "," << e[6] << "," << e[7] 
+        << std::endl;
+#endif
 
   // Set error to zero if within error band
   if (fabs(e[0])<POSITION_EPSILON*1000) e[0]=0;
@@ -496,8 +546,11 @@ int pack_position_estimate(elka_packet_s *snd,
   }
 #endif
 
-  serialize(&(data[0]),&base_thrust,2);
-  serialize(&(data[2]),&e,32);
+  serialize(&(data[0]),&dt,4);
+  serialize(&(data[4]),&base_thrust,2);
+  serialize(&(data[6]),&e,32);
+
+  t_prev = hrt_absolute_time(); // Reset previous time
 
   return append_pkt(
           snd,

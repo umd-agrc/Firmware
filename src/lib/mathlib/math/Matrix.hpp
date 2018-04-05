@@ -453,7 +453,7 @@ public:
   Vector<M> get_col(const int c)
   {
     float col[M];
-    for (uint32_t i=1; i<M;i++) {
+    for (uint32_t i=0; i<M;i++) {
       col[i]=this->data[i][c];
     }
     Vector<M> res(col);

@@ -66,6 +66,7 @@ public:
 
   BasicNavigator *get_navigator() {return &_nav;};
 	int8_t parse_plan_element(uint8_t element_type,hrt_abstime t);
+  int8_t parse_plan_element(plan_element_params_s el);
   //TODO Clear setpoints from plan_element
   //     For now just reset setpoints
   void erase_plan_element(

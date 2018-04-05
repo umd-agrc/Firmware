@@ -1,6 +1,7 @@
-uint8 TYPE_CHECK = 0
-uint8 TYPE_CALIBRATE = 1
-uint8 TYPE_TRAJECTORY = 2
+uint8 TYPE_NONE = 0
+uint8 TYPE_CHECK = 1
+uint8 TYPE_CALIBRATE = 2
+uint8 TYPE_TRAJECTORY = 3
 
 uint8 type
 uint64 dt

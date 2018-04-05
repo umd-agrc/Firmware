@@ -16,6 +16,7 @@
 #include <uORB/topics/nn_in.h>
 #include <uORB/topics/nn_out.h>
 #include <uORB/topics/elka_msg.h>
+#include <uORB/topics/plan_element_params.h>
 #include <lib/mathlib/math/Vector.hpp>
 #include <elka_ctl/posix/serial_defines.h>
 #include <elka_ctl/posix/basic_messenger.h>
@@ -31,7 +32,7 @@ static genann *nn_ctl_;
 
 int nn_loop(int argc, char **argv);
 int8_t parse_plan_file(
-	std::vector<std::pair<uint8_t,hrt_abstime>>*plan,const char *plan_file);
+	std::vector<plan_element_params_s>*plan,const char *plan_file);
 
 static void usage();
 void usage() {
@@ -111,27 +112,35 @@ int nn_loop(int argc, char **argv) {
 	thread_running_=true;
   nn_in_s nn_ctl_in;
   nn_out_s nn_ctl_out;
-  elka_msg_s elka_posix;
-	std::vector<std::pair<uint8_t,hrt_abstime>> flight_plan;
+  //elka_msg_s elka_posix;
+  plan_element_params_s plan_element_params;
+	std::vector<plan_element_params_s> flight_plan;
 	
-	memset(&elka_posix,0,sizeof(elka_posix));
   memset(&nn_ctl_in,0,sizeof(nn_ctl_in));
   memset(&nn_ctl_out,0,sizeof(nn_ctl_out));
+	//memset(&elka_posix,0,sizeof(elka_posix));
+  memset(&plan_element_params,0,sizeof(plan_element_params));
 
   //Read in and publish plan file
 	char plan_file[66]="test_takeoff.plan";
 
-	orb_advert_t elka_posix_pub=orb_advertise(ORB_ID(elka_msg), &elka_posix);
+	//orb_advert_t elka_posix_pub=orb_advertise(ORB_ID(elka_msg), &elka_posix);
+  orb_advert_t plan_elements_pub=orb_advertise(
+    ORB_ID(plan_element_params), &plan_element_params);
 	// Sleep for one second before publishing plan file
 	usleep(1000000);
 
-	write_elka_msg_header(&elka_posix,9,MSG_TYPE_PLAN_ELEMENT);
+	//write_elka_msg_header(&elka_posix,9,MSG_TYPE_PLAN_ELEMENT);
   parse_plan_file(&flight_plan,plan_file);
 	for (auto it=flight_plan.begin();it!=flight_plan.end();it++) {
+    /*
 		elka_posix.data[ELKA_MSG_DATA_OFFSET]=it->first;
 		serialize(&elka_posix.data[ELKA_MSG_DATA_OFFSET+1],
 			&it->second,8);
 		orb_publish(ORB_ID(elka_msg), elka_posix_pub, &elka_posix);
+    */
+    orb_publish(ORB_ID(plan_element_params), plan_elements_pub,
+      &(*it));
 		// Sleep so that DSP side can receive messages w/o missing any
 		// DSP receives elka_msg at 30Hz
 		usleep(200000);
@@ -203,9 +212,9 @@ int nn_loop(int argc, char **argv) {
 }
 
 int8_t parse_plan_file(
-	std::vector<std::pair<uint8_t,hrt_abstime>>*plan,const char *plan_file) {
+	std::vector<plan_element_params_s>*plan,const char *plan_file) {
   FILE *f=nullptr;
-	uint8_t plan_element_type;
+  plan_element_params_s plan_element_params;
 
 	char plan_file_path[143]="\0", *plan_fp;
 
@@ -224,7 +233,6 @@ int8_t parse_plan_file(
   //TODO parse file
   char line[128],*line_ptr,phrase[10][20];
   uint8_t j=0,k=0;
-	hrt_abstime dt;
   while (fgets(line,sizeof(line),f)!=NULL) {
     j=0;k=0;
     line_ptr=line;
@@ -244,30 +252,51 @@ int8_t parse_plan_file(
     // Parse phrase read into plan
     for (k=0;k<j;k++) {
       if (!strcmp(phrase[k],"calibrate")) {
-				plan_element_type=PLAN_ELEMENT_CALIBRATE;
-				dt=0.7*(double)PLAN_ELEMENT_DEFAULT_LEN;
+				plan_element_params.type=plan_element_params_s::TYPE_CALIBRATE;
+				plan_element_params.dt=0.7*(double)PLAN_ELEMENT_DEFAULT_LEN;
       } else if (!strcmp(phrase[k],"check")) {
-				plan_element_type=PLAN_ELEMENT_CHECK;
-				dt=0.7*(double)PLAN_ELEMENT_DEFAULT_LEN;
+				plan_element_params.type=plan_element_params_s::TYPE_CHECK;
+				plan_element_params.dt=0.7*(double)PLAN_ELEMENT_DEFAULT_LEN;
       } else if (!strcmp(phrase[k],"takeoff")) {
-				plan_element_type=PLAN_ELEMENT_TAKEOFF;
-				dt=3*(double)PLAN_ELEMENT_DEFAULT_LEN;
+				plan_element_params.type=plan_element_params_s::TYPE_TRAJECTORY;
+        plan_element_params.trajectory_type=plan_element_params_s::TRAJ_TYPE_TAKEOFF;
+        plan_element_params.dpsi=0;
+				plan_element_params.dt=2.5*(double)PLAN_ELEMENT_DEFAULT_LEN;
       } else if (!strcmp(phrase[k],"land")) {
-				plan_element_type=PLAN_ELEMENT_LAND;
-				dt=(double)PLAN_ELEMENT_DEFAULT_LEN;
+				plan_element_params.type=plan_element_params_s::TYPE_TRAJECTORY;
+        plan_element_params.trajectory_type=plan_element_params_s::TRAJ_TYPE_LAND;
+				plan_element_params.dt=(double)PLAN_ELEMENT_DEFAULT_LEN;
       } else if (!strcmp(phrase[k],"hover")) {
-				plan_element_type=PLAN_ELEMENT_HOVER;
+				plan_element_params.type=plan_element_params_s::TYPE_TRAJECTORY;
+        plan_element_params.trajectory_type=plan_element_params_s::TRAJ_TYPE_HOVER;
+        plan_element_params.dpsi=0;
 #if defined(ELKA_DEBUG) && defined(DEBUG_HOVER_HOLD)
-				dt=100*(double)PLAN_ELEMENT_DEFAULT_LEN;
+				plan_element_params.dt=100*(double)PLAN_ELEMENT_DEFAULT_LEN;
 #else
-				dt=(double)PLAN_ELEMENT_DEFAULT_LEN;
+				plan_element_params.dt=(double)PLAN_ELEMENT_DEFAULT_LEN;
 #endif
+      } else if (!strcmp(phrase[k],"line")) {
+				plan_element_params.type=plan_element_params_s::TYPE_TRAJECTORY;
+        plan_element_params.trajectory_type=plan_element_params_s::TRAJ_TYPE_LINE;
+        plan_element_params.dpsi=0;
+				plan_element_params.dt=2*(double)PLAN_ELEMENT_DEFAULT_LEN;
+      } else if (!strcmp(phrase[k],"circle")) {
+				plan_element_params.type=plan_element_params_s::TYPE_TRAJECTORY;
+        plan_element_params.trajectory_type=plan_element_params_s::TRAJ_TYPE_CIRCLE;
+        plan_element_params.trajectory_direction=plan_element_params_s::TRAJ_DIR_FWD;
+        plan_element_params.trajectory_radius=0.5;
+        plan_element_params.dpsi=0;
+				plan_element_params.dt=2*(double)PLAN_ELEMENT_DEFAULT_LEN;
+      } else if (!strcmp(phrase[k],"spin")) {
+				plan_element_params.type=plan_element_params_s::TYPE_TRAJECTORY;
+        plan_element_params.trajectory_type=plan_element_params_s::TRAJ_TYPE_SPIN;
+        plan_element_params.dpsi=0;
+				plan_element_params.dt=0.8*(double)PLAN_ELEMENT_DEFAULT_LEN;
       } else {
         PX4_WARN("Unrecognized plan word %s",phrase[k]);
       }
 
-			plan->push_back(
-				std::pair<uint8_t,hrt_abstime>(plan_element_type,dt));
+			plan->push_back(plan_element_params);
     }
   }
   return ELKA_SUCCESS;

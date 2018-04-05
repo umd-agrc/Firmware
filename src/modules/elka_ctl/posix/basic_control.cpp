@@ -28,7 +28,7 @@ elka::BasicController *elka::BasicController::instance() {
 elka::BasicController::BasicController() {
   thread_running_=false;
   thread_should_exit_=true;
-  _nav=BasicNavigator();
+  //_nav=BasicNavigator();
   //_msg_mgr=BasicMessageMgr::instance();
 }
 
@@ -88,6 +88,11 @@ int8_t elka::BasicController::parse_plan_element(uint8_t element_type,
   return ELKA_SUCCESS;
 }
 
+int8_t elka::BasicController::parse_plan_element(plan_element_params_s el) {
+  _plan.insert(new PlanElement(&el));
+  return ELKA_SUCCESS;
+}
+
 void elka::BasicController::wait_for_nav() {
   if (_nav._nav_init) return;
   
@@ -115,31 +120,20 @@ int8_t elka::BasicController::execute_plan() {
   // Handle new plan element
   if (!(*it)->_begun) {
     switch((*it)->_type) {
-    case PLAN_ELEMENT_NONE:
+    case plan_element_params_s::TYPE_NONE:
       break;
-    case PLAN_ELEMENT_CALIBRATE:
+    case plan_element_params_s::TYPE_CALIBRATE:
+      PX4_INFO("Performing calibration");
       break;
-    case PLAN_ELEMENT_CHECK:
+    case plan_element_params_s::TYPE_CHECK:
+      PX4_INFO("Performing check");
       break;
-    case PLAN_ELEMENT_TAKEOFF:
+    case plan_element_params_s::TYPE_TRAJECTORY:
+      PX4_INFO("Loading trajectory");
       wait_for_nav(); // Wait for good nav pose info
       _nav.reset_setpoints(); // Erase old setpoints
-      ret=_nav.takeoff(HOVER_DEFAULT_HEIGHT,true);
-      break;
-    case PLAN_ELEMENT_TRAJECTORY:
-      wait_for_nav();
-      _nav.reset_setpoints();
-      ret=_nav.trajectory(&(*it)->_params);
-      break;
-    case PLAN_ELEMENT_LAND:
-      wait_for_nav();
-      _nav.reset_setpoints();
-      ret=_nav.land(false);
-      break;
-    case PLAN_ELEMENT_HOVER:
-      wait_for_nav();
-      _nav.reset_setpoints();
-      ret=_nav.hover(true);
+      //TODO sentinel hover hold setpoint in case no current trajectory but still flying
+      ret=_nav.trajectory(&(*it)->_params); 
       break;
     default:
       PX4_WARN("Invalid plan element type %d",(*it)->_type);
@@ -211,6 +205,7 @@ int run_controller(int argc, char **argv) {
   // Wait for vislam to publish
   usleep(400000);
 
+/*
 #if defined(ELKA_DEBUG) && defined(DEBUG_NAVIGATOR)
   print_state_call_interval_=450000; // us
   hrt_call_every(&print_state_call_, 0,
@@ -218,6 +213,7 @@ int run_controller(int argc, char **argv) {
            (hrt_callout)&print_state,
            (void *)ctl);
 #endif
+*/
 
 	while(!thread_should_exit_) {
 		ctl->execute_plan();
@@ -225,6 +221,7 @@ int run_controller(int argc, char **argv) {
 		//ctl->parse_msg();
 		usleep(20000);
 	}
+
   thread_running_=false;
   return ELKA_SUCCESS;
 }
