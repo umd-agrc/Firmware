@@ -118,10 +118,10 @@
 #define SPOOL_DEFAULT_THRUST 380
 //#define HOVER_DEFAULT_THRUST 630 // pwm
 //#define LAND_DEFAULT_THRUST 600 // pwm
-#define TAKEOFF_DEFAULT_THRUST 600 // pwm
+#define TAKEOFF_DEFAULT_THRUST 590 // pwm
 #define TAKEOFF_DTHRUST 8 // pwm
-#define HOVER_DEFAULT_THRUST 600 // pwm
-#define LAND_DEFAULT_THRUST 590 // pwm
+#define HOVER_DEFAULT_THRUST 590 // pwm
+#define LAND_DEFAULT_THRUST 575 // pwm
 #define HOVER_DEFAULT_HEIGHT (-1.0f) // m
 #define HOVER_MIN_HEIGHT (-0.7f) // m
 #define HOVER_START_HEIGHT (-0.4f) //m

@@ -279,7 +279,7 @@ int8_t parse_plan_file(
 				plan_element_params.type=plan_element_params_s::TYPE_TRAJECTORY;
         plan_element_params.trajectory_type=plan_element_params_s::TRAJ_TYPE_LINE;
         plan_element_params.dpsi=0;
-				plan_element_params.dt=2*(double)PLAN_ELEMENT_DEFAULT_LEN;
+				plan_element_params.dt=5*(double)PLAN_ELEMENT_DEFAULT_LEN;
       } else if (!strcmp(phrase[k],"circle")) {
 				plan_element_params.type=plan_element_params_s::TYPE_TRAJECTORY;
         plan_element_params.trajectory_type=plan_element_params_s::TRAJ_TYPE_CIRCLE;
@@ -291,7 +291,7 @@ int8_t parse_plan_file(
 				plan_element_params.type=plan_element_params_s::TYPE_TRAJECTORY;
         plan_element_params.trajectory_type=plan_element_params_s::TRAJ_TYPE_SPIN;
         plan_element_params.dpsi=0;
-				plan_element_params.dt=0.8*(double)PLAN_ELEMENT_DEFAULT_LEN;
+				plan_element_params.dt=1.6*(double)PLAN_ELEMENT_DEFAULT_LEN;
       } else {
         PX4_WARN("Unrecognized plan word %s",phrase[k]);
       }
