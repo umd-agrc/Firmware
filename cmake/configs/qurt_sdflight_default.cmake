@@ -51,10 +51,10 @@ set(config_module_list
 	#
 	# Estimation modules
 	#
-	modules/attitude_estimator_q
-	modules/position_estimator_inav
-	modules/local_position_estimator
-	modules/ekf2
+  #modules/attitude_estimator_q
+  #modules/position_estimator_inav
+  #modules/local_position_estimator
+  #modules/ekf2
 
 	#
 	# Vehicle Control
@@ -68,11 +68,8 @@ set(config_module_list
 	modules/systemlib/param
 	modules/systemlib
 	modules/uORB
-	modules/commander
-	modules/land_detector
-  modules/elka/common
-  modules/elka/qurt # my snapdragon uart driver
-  modules/spektrum_serial_test
+  #modules/commander
+  #modules/land_detector
 
 	#
 	# PX4 drivers
@@ -112,6 +109,11 @@ set(config_module_list
 	# sources for muorb over fastrpc
 	#
 	modules/muorb/adsp
+
+  #
+  # AGRC stuff
+  #
+  modules/elka_ctl/qurt
 	)
 
 set(config_df_driver_list

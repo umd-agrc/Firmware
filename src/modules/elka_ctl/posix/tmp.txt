@@ -1,0 +1,4 @@
+int8_t elka::BasicController::parse_plan_element(plan_element_params_s el) {
+  _plan.insert(new PlanElement(&el));
+  return ELKA_SUCCESS;
+}

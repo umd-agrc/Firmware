@@ -383,15 +383,26 @@ function(px4_add_common_flags)
 		-Wreorder
 		)
 
-	set(cxx_compile_flags
-		-g
-		-fno-exceptions
-		-fno-rtti
-		-std=gnu++11
-		-fno-threadsafe-statics
-		-DCONFIG_WCHAR_BUILTIN
-		-D__CUSTOM_FILE_IO__
-		)
+	if ("${BOARD}" STREQUAL "eagle")
+		set(cxx_compile_flags
+			-g
+			-fno-exceptions
+			-std=gnu++11
+			-fno-threadsafe-statics
+			-DCONFIG_WCHAR_BUILTIN
+			-D__CUSTOM_FILE_IO__
+			)
+	else ()
+		set(cxx_compile_flags
+			-g
+			-fno-exceptions
+			-fno-rtti
+			-std=gnu++11
+			-fno-threadsafe-statics
+			-DCONFIG_WCHAR_BUILTIN
+			-D__CUSTOM_FILE_IO__
+			)
+	endif()
 
 	# regular Clang or AppleClang
 	if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")

@@ -96,6 +96,9 @@
 #include <uORB/topics/wind_estimate.h>
 #include <uORB/topics/mount_orientation.h>
 #include <uORB/topics/collision_report.h>
+
+#include <uORB/topics/vision_velocity.h>
+
 #include <uORB/uORB.h>
 
 
@@ -4284,6 +4287,78 @@ protected:
 	}
 };
 
+/* AGRC edits for Snapdragon */
+class MavlinkStreamVisionVelocityEstimate : public MavlinkStream
+{
+public:
+	const char *get_name() const
+	{
+		return MavlinkStreamVisionVelocityEstimate::get_name_static();
+	}
+
+	static const char *get_name_static()
+	{
+		return "VISION_VELOCITY_ESTIMATE";
+	}
+
+	static uint16_t get_id_static()
+	{
+		return MAVLINK_MSG_ID_VISION_VELOCITY_ESTIMATE;
+	}
+
+	uint16_t get_id()
+	{
+		return get_id_static();
+	}
+
+	static MavlinkStream *new_instance(Mavlink *mavlink)
+	{
+		return new MavlinkStreamVisionVelocityEstimate(mavlink);
+	}
+
+	unsigned get_size()
+	{
+		return (_vel_time > 0) ? MAVLINK_MSG_ID_VISION_VELOCITY_ESTIMATE_LEN + MAVLINK_NUM_NON_PAYLOAD_BYTES : 0;
+	}
+private:
+
+	MavlinkOrbSubscription *_vel_sub;
+	uint64_t _vel_time;
+
+	/* do not allow top copying this class */
+	MavlinkStreamVisionVelocityEstimate(MavlinkStreamVisionVelocityEstimate &);
+	MavlinkStreamVisionVelocityEstimate &operator = (const MavlinkStreamVisionVelocityEstimate &);
+
+protected:
+	explicit MavlinkStreamVisionVelocityEstimate(Mavlink *mavlink) : MavlinkStream(mavlink),
+		_vel_sub(_mavlink->add_orb_subscription(ORB_ID(vision_velocity))),
+		_vel_time(0)
+	{}
+
+	bool send(const hrt_abstime t)
+	{
+		struct vision_velocity_s vvel = {};
+
+		bool vel_updated = _vel_sub->update(&_vel_time, &vvel);
+
+		if (vel_updated) {
+			mavlink_vision_velocity_estimate_t vmsg = {};
+			vmsg.usec = vvel.timestamp;
+			vmsg.vx = vvel.vx;
+			vmsg.vy = vvel.vy;
+			vmsg.vz = vvel.vz;
+			vmsg.rollspeed = vvel.rollspeed;
+			vmsg.pitchspeed = vvel.pitchspeed;
+			vmsg.yawspeed = vvel.yawspeed;
+
+			mavlink_msg_vision_velocity_estimate_send_struct(_mavlink->get_channel(), &vmsg);
+		}
+
+		return (vel_updated);
+	}
+};
+/* End AGRC edits for Snapdragon */
+
 const StreamListItem *streams_list[] = {
 	new StreamListItem(&MavlinkStreamHeartbeat::new_instance, &MavlinkStreamHeartbeat::get_name_static, &MavlinkStreamHeartbeat::get_id_static),
 	new StreamListItem(&MavlinkStreamStatustext::new_instance, &MavlinkStreamStatustext::get_name_static, &MavlinkStreamStatustext::get_id_static),
@@ -4335,5 +4410,6 @@ const StreamListItem *streams_list[] = {
 	new StreamListItem(&MavlinkStreamMountOrientation::new_instance, &MavlinkStreamMountOrientation::get_name_static, &MavlinkStreamMountOrientation::get_id_static),
 	new StreamListItem(&MavlinkStreamHighLatency::new_instance, &MavlinkStreamHighLatency::get_name_static, &MavlinkStreamWind::get_id_static),
 	new StreamListItem(&MavlinkStreamGroundTruth::new_instance, &MavlinkStreamGroundTruth::get_name_static, &MavlinkStreamGroundTruth::get_id_static),
+	new StreamListItem(&MavlinkStreamVisionVelocityEstimate::new_instance, &MavlinkStreamVisionVelocityEstimate::get_name_static, &MavlinkStreamVisionVelocityEstimate::get_id_static),
 	nullptr
 };

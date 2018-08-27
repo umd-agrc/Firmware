@@ -51,9 +51,14 @@ set(msg_files
 	differential_pressure.msg
 	distance_sensor.msg
 	ekf2_innovations.msg
+<<<<<<< HEAD
   #ekf2_replay.msg
 	elka_msg.msg
+=======
+>>>>>>> new_basic_autonomy
 	ekf2_timestamps.msg
+	elka_msg.msg
+	elka_packet.msg
 	esc_report.msg
 	esc_status.msg
 	estimator_status.msg
@@ -73,9 +78,12 @@ set(msg_files
 	mission_result.msg
 	mount_orientation.msg
 	multirotor_motor_limits.msg
+  nn_in.msg
+  nn_out.msg
 	offboard_control_mode.msg
 	optical_flow.msg
 	parameter_update.msg
+  plan_element_params.msg
 	position_setpoint.msg
 	position_setpoint_triplet.msg
 	power_button_state.msg
@@ -117,10 +125,12 @@ set(msg_files
 	vehicle_land_detected.msg
 	vehicle_local_position.msg
 	vehicle_local_position_setpoint.msg
+  vehicle_odometry.msg
 	vehicle_rates_setpoint.msg
 	vehicle_roi.msg
 	vehicle_status.msg
 	vehicle_status_flags.msg
+  vision_velocity.msg
 	vtol_vehicle_status.msg
 	wind_estimate.msg
 	)

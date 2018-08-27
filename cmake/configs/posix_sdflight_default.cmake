@@ -48,13 +48,13 @@ set(config_module_list
 
 	modules/mavlink
 
-	modules/attitude_estimator_q
-	modules/position_estimator_inav
-	modules/local_position_estimator
-	modules/ekf2
+  #modules/attitude_estimator_q
+  #modules/position_estimator_inav
+  #modules/local_position_estimator
+  #modules/ekf2
 
-	modules/mc_pos_control
-	modules/mc_att_control
+  modules/mc_pos_control
+  modules/mc_att_control
 
 	modules/systemlib/param
 	modules/systemlib
@@ -65,10 +65,8 @@ set(config_module_list
 	modules/sdlog2
 	modules/logger
 	modules/simulator
-	modules/commander
-	modules/navigator
-  modules/elka/common
-  modules/elka/posix # my elka module
+  #modules/commander
+  #modules/navigator
 
 	lib/controllib
 	lib/conversion
@@ -80,12 +78,17 @@ set(config_module_list
 	lib/mathlib
 	lib/mathlib/math/filter
 	lib/mixer
-	lib/runway_takeoff
-	lib/tailsitter_recovery
-	lib/terrain_estimation
-	lib/version
+  lib/runway_takeoff
+  lib/tailsitter_recovery
+  lib/terrain_estimation
+  lib/version
 
 	platforms/common
 	platforms/posix/px4_layer
 	platforms/posix/work_queue
+
+  #AGRC stuff
+  modules/elka_nn
+  modules/elka_ctl/posix
+  #modules/rovio
 	)

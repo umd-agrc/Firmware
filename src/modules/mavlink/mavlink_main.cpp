@@ -2047,6 +2047,7 @@ Mavlink::task_main(int argc, char *argv[])
 		configure_stream("VFR_HUD", 4.0f);
 		configure_stream("WIND_COV", 1.0f);
 		configure_stream("CAMERA_IMAGE_CAPTURED");
+		configure_stream("VISION_VELOCITY_ESTIMATE", 1.0f);
 		break;
 
 	case MAVLINK_MODE_ONBOARD:
@@ -2083,6 +2084,7 @@ Mavlink::task_main(int argc, char *argv[])
 		configure_stream("CAMERA_TRIGGER");
 		configure_stream("CAMERA_IMAGE_CAPTURED");
 		configure_stream("ACTUATOR_CONTROL_TARGET0", 10.0f);
+		configure_stream("VISION_VELOCITY_ESTIMATE", 1.0f);
 		break;
 
 	case MAVLINK_MODE_OSD:
@@ -2141,6 +2143,7 @@ Mavlink::task_main(int argc, char *argv[])
 		configure_stream("CAMERA_IMAGE_CAPTURED");
 		configure_stream("ACTUATOR_CONTROL_TARGET0", 30.0f);
 		configure_stream("MANUAL_CONTROL", 5.0f);
+		configure_stream("VISION_VELOCITY_ESTIMATE", 1.0f);
 		break;
 
 	case MAVLINK_MODE_IRIDIUM:
