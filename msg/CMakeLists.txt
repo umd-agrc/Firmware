@@ -51,11 +51,7 @@ set(msg_files
 	differential_pressure.msg
 	distance_sensor.msg
 	ekf2_innovations.msg
-<<<<<<< HEAD
   #ekf2_replay.msg
-	elka_msg.msg
-=======
->>>>>>> new_basic_autonomy
 	ekf2_timestamps.msg
 	elka_msg.msg
 	elka_packet.msg
